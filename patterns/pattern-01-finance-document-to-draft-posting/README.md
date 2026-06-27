@@ -15,16 +15,29 @@ The rule of the pattern: **nothing is posted until a human approves.**
 
 ## How to run
 
-(Coming soon. This example is being built and tested before these steps are written.)
-
-## Folders
+Set up the environment once (see [docs/getting-started.md](../../docs/getting-started.md)). Then, from this folder:
 
 ```
-src/       the agent and the four-step flow
-tests/     tests that prove each step works
-prompts/   Claude Code prompts to build or change this example
+python run_demo.py --approve yes    # rules pass, you approve, it books
+python run_demo.py --approve no     # you reject; nothing is booked
+python run_demo.py                  # asks you to approve
 ```
+
+Run the tests from the repo root with `pytest`.
+
+## What is inside
+
+```
+src/pattern1/proposer.py    the "propose" step (rule-based; swap in an LLM)
+src/pattern1/validator.py   the fixed rules that pass or fail a posting
+src/pattern1/flow.py        ties the four steps together
+tests/                      tests that prove each step and the whole flow
+run_demo.py                 run it end to end
+prompts/                    Claude Code prompts to change or extend it
+```
+
+The shared fake/governed SAP layer lives in [shared/sap_client/](../../shared/sap_client/).
 
 ## Status
 
-Not built yet. This README will be filled in once the example runs end to end.
+Built and tested. The four-step flow runs end to end against the fake, governed SAP. The "propose" step is rule-based today so it runs offline; an LLM-backed proposer plugs in behind the same interface (next step).

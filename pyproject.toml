@@ -1,0 +1,16 @@
+[project]
+name = "ai-agents-for-sap"
+version = "0.1.0"
+description = "Companion code for the book 'AI Agents for SAP' — runnable agent pattern examples against a fake/governed SAP layer."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    "shared",
+    "patterns/pattern-01-finance-document-to-draft-posting/src",
+]
+testpaths = ["patterns"]
