@@ -99,7 +99,10 @@ def main() -> None:
 
     print("\nAudit trail (every call the agent made):")
     for entry in client.audit_log:
-        print(f"  {entry.operation:<8} {entry.target:<12} {entry.outcome}")
+        print(
+            f"  {entry.actor}  {entry.operation:<8} {entry.target:<12} {entry.outcome}"
+        )
+    print(f"\nAudit intact (hash chain verifies): {client.verify_audit()}")
 
 
 if __name__ == "__main__":

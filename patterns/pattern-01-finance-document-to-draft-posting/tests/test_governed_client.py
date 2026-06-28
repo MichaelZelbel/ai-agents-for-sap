@@ -77,3 +77,31 @@ def test_blocked_calls_are_logged():
     last = client.audit_log[-1]
     assert last.operation == "read"
     assert "not_entitled" in last.outcome
+
+
+def test_every_entry_carries_the_agents_identity():
+    client = governed()
+    client.stage_posting(make_posting())
+    assert all(entry.actor == "invoice-agent@nordwind" for entry in client.audit_log)
+
+
+def test_audit_chain_verifies_when_intact():
+    client = governed()
+    staged = client.stage_posting(make_posting())
+    client.record_approval(staged.staged_id, approver="alice")
+    client.confirm_posting(staged.staged_id)
+    assert client.verify_audit() is True
+
+
+def test_tampering_with_the_audit_is_detected():
+    import dataclasses
+
+    client = governed()
+    staged = client.stage_posting(make_posting())
+    client.record_approval(staged.staged_id, approver="alice")
+    client.confirm_posting(staged.staged_id)
+    # Someone edits a past entry to hide what happened. The chain no longer matches.
+    client.audit_log[0] = dataclasses.replace(
+        client.audit_log[0], outcome="blocked:not_entitled"
+    )
+    assert client.verify_audit() is False
