@@ -12,5 +12,6 @@ dev = ["pytest>=8"]
 pythonpath = [
     "shared",
     "patterns/pattern-01-finance-document-to-draft-posting/src",
+    "patterns/pattern-02-invoice-triage/src",
 ]
 testpaths = ["patterns"]
