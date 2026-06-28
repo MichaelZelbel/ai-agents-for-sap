@@ -14,5 +14,6 @@ pythonpath = [
     "patterns/pattern-01-finance-document-to-draft-posting/src",
     "patterns/pattern-02-invoice-triage/src",
     "patterns/pattern-03-three-way-match/src",
+    "patterns/pattern-04-dispute-assistant/src",
 ]
 testpaths = ["patterns"]
