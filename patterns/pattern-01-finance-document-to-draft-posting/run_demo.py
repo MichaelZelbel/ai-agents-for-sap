@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO / "shared"))
 from sap_client import GovernedSapClient, MockSapClient  # noqa: E402
 
 from pattern1.flow import run_pattern1  # noqa: E402
-from pattern1.proposer import RuleBasedProposer  # noqa: E402
+from pattern1.proposer import LlmBackedProposer, RuleBasedProposer  # noqa: E402
 from pattern1.validator import default_config  # noqa: E402
 
 
@@ -59,7 +59,21 @@ def main() -> None:
     parser.add_argument(
         "--approve", choices=["ask", "yes", "no"], default="ask", help="human decision"
     )
+    parser.add_argument(
+        "--proposer",
+        choices=["rule", "llm"],
+        default="rule",
+        help="rule = offline deterministic; llm = a real model via OpenRouter",
+    )
+    parser.add_argument("--model", default=None, help="override the OpenRouter model")
     args = parser.parse_args()
+
+    if args.proposer == "llm":
+        proposer = (
+            LlmBackedProposer(model=args.model) if args.model else LlmBackedProposer()
+        )
+    else:
+        proposer = RuleBasedProposer()
 
     client = GovernedSapClient(
         MockSapClient(), entitlements={"read", "stage", "confirm"}
@@ -67,7 +81,7 @@ def main() -> None:
 
     result = run_pattern1(
         client,
-        RuleBasedProposer(),
+        proposer,
         args.doc,
         posting_date="2026-06-27",
         config=default_config(),
