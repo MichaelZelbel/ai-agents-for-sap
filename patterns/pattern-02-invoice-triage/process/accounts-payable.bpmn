@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A slice of Nordwind's accounts-payable process, as a real SAP team would model it
+  in SAP Signavio or SAP Build Process Automation and export as BPMN 2.0.
+
+  The "Triage document" task is the box we build an agent for. The exclusive gateway
+  after it has three outgoing flows, one per category the agent must choose from, and
+  each flow routes to its next step. The agent's categories and routes ARE these
+  flows. A test (tests/test_bpmn_spec.py) parses this file and checks they match.
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="ap-triage-defs"
+                  targetNamespace="http://nordwind.example/ap">
+  <bpmn:process id="accounts_payable_intake" name="Accounts Payable Intake" isExecutable="false">
+
+    <bpmn:startEvent id="start" name="Invoice arrives">
+      <bpmn:outgoing>flow_to_triage</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:task id="triage" name="Triage document">
+      <bpmn:incoming>flow_to_triage</bpmn:incoming>
+      <bpmn:outgoing>flow_to_gateway</bpmn:outgoing>
+    </bpmn:task>
+
+    <bpmn:exclusiveGateway id="route" name="Document type?">
+      <bpmn:incoming>flow_to_gateway</bpmn:incoming>
+      <bpmn:outgoing>flow_po_invoice</bpmn:outgoing>
+      <bpmn:outgoing>flow_direct_expense</bpmn:outgoing>
+      <bpmn:outgoing>flow_not_an_invoice</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:task id="three_way_match" name="Three-way match"/>
+    <bpmn:task id="post_directly" name="Draft posting, approve, write"/>
+    <bpmn:task id="send_to_person" name="Send to a person"/>
+
+    <bpmn:sequenceFlow id="flow_to_triage" sourceRef="start" targetRef="triage"/>
+    <bpmn:sequenceFlow id="flow_to_gateway" sourceRef="triage" targetRef="route"/>
+
+    <bpmn:sequenceFlow id="flow_po_invoice" name="po_invoice" sourceRef="route" targetRef="three_way_match">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">category == 'po_invoice'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow_direct_expense" name="direct_expense" sourceRef="route" targetRef="post_directly">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">category == 'direct_expense'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flow_not_an_invoice" name="not_an_invoice" sourceRef="route" targetRef="send_to_person">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">category == 'not_an_invoice'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+  </bpmn:process>
+</bpmn:definitions>
