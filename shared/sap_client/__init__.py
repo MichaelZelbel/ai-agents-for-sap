@@ -10,6 +10,7 @@ from .errors import (
 from .governed_client import AuditEntry, GovernedSapClient
 from .interface import SapClient
 from .mock_client import MockSapClient
+from .s4_client import S4SapClient
 from .models import (
     Document,
     PostingLine,
@@ -22,6 +23,7 @@ from .models import (
 __all__ = [
     "SapClient",
     "MockSapClient",
+    "S4SapClient",
     "GovernedSapClient",
     "AuditEntry",
     "Document",
