@@ -45,11 +45,9 @@ _SYSTEM = (
 )
 
 _INSTRUCTION = (
-    "Read this vendor invoice and return ONLY a JSON object of exactly this shape, "
-    "no prose:\n"
-    '{"doc_id": "INV-123", "vendor": "Acme GmbH", "currency": "EUR", '
-    '"net_amount": "1000.00", "tax_amount": "190.00", "gross_amount": "1190.00", '
-    '"document_date": "2026-06-20"}\n\n'
+    "Read the attached vendor invoice and return ONLY a JSON object with these "
+    "keys: doc_id, vendor, currency, net_amount, tax_amount, gross_amount, "
+    "document_date. No prose.\n\n"
     "Rules:\n"
     "- doc_id is the invoice or document number printed on it.\n"
     "- currency is the ISO 4217 code, for example EUR, USD, GBP.\n"
@@ -57,9 +55,10 @@ _INSTRUCTION = (
     "separators, a dot for the decimal point.\n"
     "- net is the amount before tax, tax is the tax amount, gross is the total due.\n"
     "- document_date is the invoice date in YYYY-MM-DD form.\n"
-    "- Report the numbers as printed. Do not correct or recompute them. If the "
-    "totals on the invoice do not add up, report them anyway; the agent's guard "
-    "will catch it."
+    "- Report the numbers exactly as printed. Do not correct or recompute them. If "
+    "the totals do not add up, report them anyway; the agent's guard will catch it.\n"
+    "- If you cannot actually see the invoice, do not guess. Return "
+    '{"error": "no readable invoice"} and nothing else.'
 )
 
 
@@ -97,6 +96,8 @@ def parse_document(raw: str) -> Document:
         data = json.loads(raw[start : end + 1])
     except json.JSONDecodeError as exc:
         raise ExtractionError(f"model returned invalid JSON: {raw[:200]!r}") from exc
+    if "error" in data and "doc_id" not in data:
+        raise ExtractionError(f"model could not read the invoice: {data['error']!r}")
     try:
         return Document(
             doc_id=str(data["doc_id"]),
@@ -119,22 +120,27 @@ def _make_openrouter_caller(model: str, api_key: str) -> Callable[[Path], str]:
             raise ExtractionError(
                 "set OPENROUTER_API_KEY to read invoice files with a model"
             )
-        body = json.dumps(
-            {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": _SYSTEM},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": _INSTRUCTION},
-                            _content_part(path),
-                        ],
-                    },
-                ],
-                "temperature": 0,
-            }
-        ).encode("utf-8")
+        is_pdf = path.suffix.lower() == ".pdf"
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _SYSTEM},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": _INSTRUCTION},
+                        _content_part(path),
+                    ],
+                },
+            ],
+            "temperature": 0,
+        }
+        if is_pdf:
+            # Without this, OpenRouter does not parse the PDF for models that do not
+            # natively accept files, and the model answers with nothing to read.
+            # pdf-text is free and works for text-based PDFs (mistral-ocr for scans).
+            request["plugins"] = [{"id": "file-parser", "pdf": {"engine": "pdf-text"}}]
+        body = json.dumps(request).encode("utf-8")
         req = urllib.request.Request(
             OPENROUTER_URL,
             data=body,
