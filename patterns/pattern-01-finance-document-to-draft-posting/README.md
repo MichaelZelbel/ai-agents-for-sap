@@ -25,8 +25,14 @@ python run_agent.py --doc INV-1002           # a different seeded invoice
 python run_agent.py --doc INV-1003           # a broken invoice the guard refuses
 python run_agent.py --invoice-file my-invoice.json   # your own invoice (fields)
 python run_agent.py --invoice-file invoice.pdf       # your own invoice (PDF or image)
+python run_agent.py --invoice-file invoice.pdf --auto-onboard   # onboard an unknown vendor
 python run_agent.py --proposer llm           # use a real model via OpenRouter
 ```
+
+The fake SAP has a Business Partner (vendor) master. A posting whose vendor is not in
+it is refused (`Vendor not in master data`), like real SAP. `--auto-onboard` adds an
+unknown vendor to the master before posting so your own invoices can pass; in a real
+company that onboarding is a separate master-data role.
 
 To use `--proposer llm`, or to read a PDF or image invoice, copy your OpenRouter key
 into a file named `.env` next to `run_agent.py` (`OPENROUTER_API_KEY=sk-or-...`). It is
