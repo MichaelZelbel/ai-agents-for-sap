@@ -23,14 +23,16 @@ python run_agent.py --approve no             # you reject; nothing is booked
 python run_agent.py                          # asks you to approve
 python run_agent.py --doc INV-1002           # a different seeded invoice
 python run_agent.py --doc INV-1003           # a broken invoice the guard refuses
-python run_agent.py --invoice-file my-invoice.json   # your own invoice
+python run_agent.py --invoice-file my-invoice.json   # your own invoice (fields)
+python run_agent.py --invoice-file invoice.pdf       # your own invoice (PDF or image)
 python run_agent.py --proposer llm           # use a real model via OpenRouter
 ```
 
-To use `--proposer llm`, copy your OpenRouter key into a file named `.env` next to
-`run_agent.py` (`OPENROUTER_API_KEY=sk-or-...`). It is git-ignored. To run against
-your own invoice, copy `my-invoice.example.json` to `my-invoice.json`, edit the
-numbers, and pass it with `--invoice-file`.
+To use `--proposer llm`, or to read a PDF or image invoice, copy your OpenRouter key
+into a file named `.env` next to `run_agent.py` (`OPENROUTER_API_KEY=sk-or-...`). It is
+git-ignored. `--invoice-file` takes either a `.json` file of fields (copy
+`my-invoice.example.json` and edit it) or an image/PDF of a real invoice, which a
+vision model reads into those same fields before the agent runs.
 
 Run the tests from the repo root with `pytest`.
 

@@ -7,6 +7,7 @@ from .errors import (
     SapClientError,
     StagedPostingNotFoundError,
 )
+from .extract import ExtractionError, extract_document, parse_document
 from .governed_client import AuditEntry, GovernedSapClient
 from .interface import SapClient
 from .mock_client import MockSapClient
@@ -37,4 +38,7 @@ __all__ = [
     "StagedPostingNotFoundError",
     "NotEntitledError",
     "NotApprovedError",
+    "extract_document",
+    "parse_document",
+    "ExtractionError",
 ]

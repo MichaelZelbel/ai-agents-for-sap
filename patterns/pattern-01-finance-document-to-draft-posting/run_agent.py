@@ -5,11 +5,13 @@
     python run_agent.py --approve no           # auto-reject (scripted)
     python run_agent.py --doc INV-1002         # a different seeded invoice
     python run_agent.py --doc INV-1003         # a broken invoice the guard refuses
-    python run_agent.py --invoice-file my-invoice.json   # your own invoice
+    python run_agent.py --invoice-file my-invoice.json   # your own invoice (fields)
+    python run_agent.py --invoice-file invoice.pdf       # your own invoice (PDF/image)
     python run_agent.py --proposer llm         # use a real model via OpenRouter
 
-You need no SAP account. Everything runs in memory. To use --proposer llm, put
-your key in a file named .env next to this script:  OPENROUTER_API_KEY=sk-or-...
+You need no SAP account. Everything runs in memory. To read a PDF or image invoice,
+or to use --proposer llm, put your key in a file named .env next to this script:
+OPENROUTER_API_KEY=sk-or-...
 """
 
 from __future__ import annotations
@@ -27,7 +29,12 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE / "src"))
 sys.path.insert(0, str(REPO / "shared"))
 
-from sap_client import Document, GovernedSapClient, MockSapClient  # noqa: E402
+from sap_client import (  # noqa: E402
+    Document,
+    GovernedSapClient,
+    MockSapClient,
+    extract_document,
+)
 
 from pattern1.flow import run_pattern1  # noqa: E402
 from pattern1.proposer import LlmBackedProposer, RuleBasedProposer  # noqa: E402
@@ -51,17 +58,24 @@ def load_dotenv() -> None:
 
 
 def load_invoice_file(path: str) -> Document:
-    """Load one invoice from a JSON file into a Document you can post."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    return Document(
-        doc_id=str(data["doc_id"]),
-        vendor=str(data["vendor"]),
-        currency=str(data["currency"]),
-        net_amount=Decimal(str(data["net_amount"])),
-        tax_amount=Decimal(str(data["tax_amount"])),
-        gross_amount=Decimal(str(data["gross_amount"])),
-        document_date=str(data["document_date"]),
-    )
+    """Load one invoice you can post.
+
+    A .json file is read straight into a Document. Any other file (a PDF or an
+    image of an invoice) is read by a vision model via OpenRouter, the same
+    "document reader" step a real deployment runs before the agent ever sees it.
+    """
+    if path.lower().endswith(".json"):
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return Document(
+            doc_id=str(data["doc_id"]),
+            vendor=str(data["vendor"]),
+            currency=str(data["currency"]),
+            net_amount=Decimal(str(data["net_amount"])),
+            tax_amount=Decimal(str(data["tax_amount"])),
+            gross_amount=Decimal(str(data["gross_amount"])),
+            document_date=str(data["document_date"]),
+        )
+    return extract_document(path)
 
 
 def show(document, posting, validation) -> None:
