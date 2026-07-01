@@ -9,11 +9,18 @@ dependencies = []
 dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
 pythonpath = [
     "shared",
     "patterns/pattern-01-finance-document-to-draft-posting/src",
     "patterns/pattern-02-invoice-triage/src",
     "patterns/pattern-03-three-way-match/src",
     "patterns/pattern-04-dispute-assistant/src",
+    "patterns/pattern-05-procurement-approval-packet/src",
+    "patterns/pattern-06-close-orchestration/src",
+    "patterns/pattern-07-service-resolution/src",
+    "patterns/pattern-08-cash-application/src",
+    "patterns/pattern-09-sales-order/src",
+    "patterns/pattern-10-expense-audit/src",
 ]
 testpaths = ["patterns"]
