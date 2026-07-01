@@ -15,7 +15,7 @@ Status: ✅ ready · 🔜 coming (built before its chapter is written).
 | 6 | Give it a real SAP skill | — (browser: Joule Studio) | n/a |
 | 7 | Where low-code stops | — (reading) | n/a |
 | 8 | Set up Claude Code | — (your machine) | n/a |
-| 9 | Build the invoice-posting agent | `patterns/pattern-01-finance-document-to-draft-posting/` (`run_demo.py`) | ✅ (model wiring 🔜) |
+| 9 | Build the invoice-posting agent | `patterns/pattern-01-finance-document-to-draft-posting/` (`run_agent.py`) | ✅ (model wiring 🔜) |
 | 10 | The leash on your AI (governed boundary) | `shared/sap_client/governed_client.py` | ✅ |
 | 11 | From a diagram to a working agent | `diagrams/` + the diagram→agent prompt | 🔜 |
 | 12 | Extend it: three-way match | `patterns/pattern-02-three-way-match/` | 🔜 |

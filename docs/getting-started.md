@@ -31,9 +31,9 @@ All tests should pass. If they pass, the examples work.
 
 ```
 cd patterns/pattern-01-finance-document-to-draft-posting
-python run_demo.py --approve yes    # rules pass, you approve, it books
-python run_demo.py --approve no     # you reject; nothing is booked
-python run_demo.py                  # asks you to approve
+python run_agent.py --approve yes    # rules pass, you approve, it books
+python run_agent.py --approve no     # you reject; nothing is booked
+python run_agent.py                  # asks you to approve
 ```
 
 ## How each pattern is organized
@@ -42,7 +42,7 @@ python run_demo.py                  # asks you to approve
 src/         the agent and the pattern code
 tests/       the tests that prove the pattern works
 prompts/     Claude Code prompts to build, change, or extend the example
-run_demo.py  run the whole pattern end to end
+run_agent.py  run the whole pattern end to end
 ```
 
 ## The fake SAP system

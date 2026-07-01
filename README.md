@@ -45,9 +45,9 @@ Then run the first agent end to end:
 
 ```bash
 cd patterns/pattern-01-finance-document-to-draft-posting
-python run_demo.py --approve yes    # rules pass, you approve, it books
-python run_demo.py --approve no     # you reject; nothing is booked
-python run_demo.py                  # asks you to approve
+python run_agent.py --approve yes    # rules pass, you approve, it books
+python run_agent.py --approve no     # you reject; nothing is booked
+python run_agent.py                  # asks you to approve
 ```
 
 Full setup notes: [docs/getting-started.md](docs/getting-started.md).

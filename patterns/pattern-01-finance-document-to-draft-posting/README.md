@@ -18,9 +18,9 @@ The rule of the pattern: **nothing is posted until a human approves.**
 Set up the environment once (see [docs/getting-started.md](../../docs/getting-started.md)). Then, from this folder:
 
 ```
-python run_demo.py --approve yes    # rules pass, you approve, it books
-python run_demo.py --approve no     # you reject; nothing is booked
-python run_demo.py                  # asks you to approve
+python run_agent.py --approve yes    # rules pass, you approve, it books
+python run_agent.py --approve no     # you reject; nothing is booked
+python run_agent.py                  # asks you to approve
 ```
 
 Run the tests from the repo root with `pytest`.
@@ -32,7 +32,7 @@ src/pattern1/proposer.py    the "propose" step (rule-based; swap in an LLM)
 src/pattern1/validator.py   the fixed rules that pass or fail a posting
 src/pattern1/flow.py        ties the four steps together
 tests/                      tests that prove each step and the whole flow
-run_demo.py                 run it end to end
+run_agent.py                 run it end to end
 prompts/                    Claude Code prompts to change or extend it
 ```
 

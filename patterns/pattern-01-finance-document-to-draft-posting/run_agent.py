@@ -1,9 +1,9 @@
 """Run Pattern 1 end to end against the fake, governed SAP.
 
-    python run_demo.py                 # asks you to approve
-    python run_demo.py --approve yes   # auto-approve (scripted)
-    python run_demo.py --approve no    # auto-reject (scripted)
-    python run_demo.py --doc INV-1002
+    python run_agent.py                 # asks you to approve
+    python run_agent.py --approve yes   # auto-approve (scripted)
+    python run_agent.py --approve no    # auto-reject (scripted)
+    python run_agent.py --doc INV-1002
 
 You need no SAP account. Everything runs in memory.
 """
