@@ -50,11 +50,19 @@ def _seed_documents() -> dict[str, Document]:
     return {d.doc_id: d for d in docs}
 
 
+def _seed_business_partners() -> set[str]:
+    """The vendor master: who SAP already knows. You cannot post to a vendor that
+    is not a Business Partner here, just like a real system. Seeded with the
+    vendors of the sample invoices, so those post and an outside vendor does not."""
+    return {"Office Supplies Co", "Cloud Hosting Ltd", "Meridian Interiors GmbH"}
+
+
 class MockSapClient:
     """In-memory stand-in for SAP. Implements the SapClient interface."""
 
     def __init__(self) -> None:
         self._documents = _seed_documents()
+        self._business_partners = _seed_business_partners()
         self._staged: dict[str, StagedPosting] = {}
         self._posted: dict[str, PostingResult] = {}
         self._staged_seq = count(1)
@@ -63,6 +71,18 @@ class MockSapClient:
     def register_document(self, document: Document) -> None:
         """Add (or replace) a document, e.g. one loaded from your own file."""
         self._documents[document.doc_id] = document
+
+    def known_vendors(self) -> frozenset[str]:
+        """The current Business Partner master (vendor names SAP knows)."""
+        return frozenset(self._business_partners)
+
+    def is_known_vendor(self, name: str) -> bool:
+        return name in self._business_partners
+
+    def add_business_partner(self, name: str) -> None:
+        """Onboard a vendor into the master. In a real company this is a master-data
+        team's job, gated so a posting agent cannot do it alone."""
+        self._business_partners.add(name)
 
     def read_document(self, doc_id: str) -> Document:
         try:

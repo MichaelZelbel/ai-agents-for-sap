@@ -17,6 +17,8 @@ from sap_client import Document, ProposedPosting
 class ValidatorConfig:
     allowed_accounts: frozenset[str]
     tolerance: Decimal = Decimal("0.01")
+    # The vendor master. None means "no master data was supplied, skip the check".
+    known_vendors: frozenset[str] | None = None
 
 
 def default_config() -> ValidatorConfig:
@@ -80,6 +82,9 @@ def validate_posting(
         reasons.append(
             f"Posting document id {posting.doc_id} does not match {document.doc_id}."
         )
+
+    if config.known_vendors is not None and document.vendor not in config.known_vendors:
+        reasons.append(f"Vendor not in master data: {document.vendor}.")
 
     status = "PASS" if not reasons else "FAIL"
     return ValidationResult(status=status, reasons=reasons)

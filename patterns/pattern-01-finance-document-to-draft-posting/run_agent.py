@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -124,6 +125,11 @@ def main() -> None:
         help="rule = offline deterministic; llm = a real model via OpenRouter",
     )
     parser.add_argument("--model", default=None, help="override the OpenRouter model")
+    parser.add_argument(
+        "--auto-onboard",
+        action="store_true",
+        help="if the vendor is not in the master, add it before posting",
+    )
     args = parser.parse_args()
 
     if args.proposer == "llm":
@@ -140,14 +146,22 @@ def main() -> None:
         mock.register_document(invoice)
         doc_id = invoice.doc_id
 
+    # Onboarding a vendor is a master-data change. In a real company it is a
+    # separate role from posting; here you can opt in with --auto-onboard.
+    document = mock.read_document(doc_id)
+    if args.auto_onboard and not mock.is_known_vendor(document.vendor):
+        mock.add_business_partner(document.vendor)
+        print(f"Onboarded vendor to the Business Partner master: {document.vendor}")
+
     client = GovernedSapClient(mock, entitlements={"read", "stage", "confirm"})
 
+    config = replace(default_config(), known_vendors=mock.known_vendors())
     result = run_pattern1(
         client,
         proposer,
         doc_id,
         posting_date="2026-06-27",
-        config=default_config(),
+        config=config,
         approve=make_approver(args.approve),
     )
 
