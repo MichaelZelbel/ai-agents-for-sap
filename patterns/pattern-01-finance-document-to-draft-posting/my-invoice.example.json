@@ -1,0 +1,9 @@
+{
+  "doc_id": "MY-0001",
+  "vendor": "Your Vendor Name",
+  "currency": "EUR",
+  "net_amount": "1000.00",
+  "tax_amount": "190.00",
+  "gross_amount": "1190.00",
+  "document_date": "2026-06-27"
+}

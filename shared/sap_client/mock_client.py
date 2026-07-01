@@ -33,6 +33,19 @@ def _seed_documents() -> dict[str, Document]:
             gross_amount=Decimal("595.00"),
             document_date="2026-06-21",
         ),
+        # A deliberately broken invoice: the stated total (gross) does not match
+        # its own line items. Net plus tax is 1190, but gross says 1200. The agent
+        # will still propose a posting, and the validator will refuse it because
+        # the posting cannot balance. Use it to see an exception case.
+        Document(
+            doc_id="INV-1003",
+            vendor="Meridian Interiors GmbH",
+            currency="EUR",
+            net_amount=Decimal("1000.00"),
+            tax_amount=Decimal("190.00"),
+            gross_amount=Decimal("1200.00"),
+            document_date="2026-06-22",
+        ),
     ]
     return {d.doc_id: d for d in docs}
 
@@ -46,6 +59,10 @@ class MockSapClient:
         self._posted: dict[str, PostingResult] = {}
         self._staged_seq = count(1)
         self._posting_seq = count(1)
+
+    def register_document(self, document: Document) -> None:
+        """Add (or replace) a document, e.g. one loaded from your own file."""
+        self._documents[document.doc_id] = document
 
     def read_document(self, doc_id: str) -> Document:
         try:

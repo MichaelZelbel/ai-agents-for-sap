@@ -1,17 +1,24 @@
 """Run Pattern 1 end to end against the fake, governed SAP.
 
-    python run_agent.py                 # asks you to approve
-    python run_agent.py --approve yes   # auto-approve (scripted)
-    python run_agent.py --approve no    # auto-reject (scripted)
-    python run_agent.py --doc INV-1002
+    python run_agent.py                        # asks you to approve
+    python run_agent.py --approve yes          # auto-approve (scripted)
+    python run_agent.py --approve no           # auto-reject (scripted)
+    python run_agent.py --doc INV-1002         # a different seeded invoice
+    python run_agent.py --doc INV-1003         # a broken invoice the guard refuses
+    python run_agent.py --invoice-file my-invoice.json   # your own invoice
+    python run_agent.py --proposer llm         # use a real model via OpenRouter
 
-You need no SAP account. Everything runs in memory.
+You need no SAP account. Everything runs in memory. To use --proposer llm, put
+your key in a file named .env next to this script:  OPENROUTER_API_KEY=sk-or-...
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 # Make the shared SAP layer and this pattern importable when run directly.
@@ -20,11 +27,41 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE / "src"))
 sys.path.insert(0, str(REPO / "shared"))
 
-from sap_client import GovernedSapClient, MockSapClient  # noqa: E402
+from sap_client import Document, GovernedSapClient, MockSapClient  # noqa: E402
 
 from pattern1.flow import run_pattern1  # noqa: E402
 from pattern1.proposer import LlmBackedProposer, RuleBasedProposer  # noqa: E402
 from pattern1.validator import default_config  # noqa: E402
+
+
+def load_dotenv() -> None:
+    """Read KEY=VALUE lines from a .env file next to this script into the
+    environment, so your OpenRouter key persists on disk and every run and
+    every tool can see it. Values already set in the environment win.
+    """
+    env_file = HERE / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+def load_invoice_file(path: str) -> Document:
+    """Load one invoice from a JSON file into a Document you can post."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return Document(
+        doc_id=str(data["doc_id"]),
+        vendor=str(data["vendor"]),
+        currency=str(data["currency"]),
+        net_amount=Decimal(str(data["net_amount"])),
+        tax_amount=Decimal(str(data["tax_amount"])),
+        gross_amount=Decimal(str(data["gross_amount"])),
+        document_date=str(data["document_date"]),
+    )
 
 
 def show(document, posting, validation) -> None:
@@ -54,8 +91,15 @@ def make_approver(mode: str):
 
 
 def main() -> None:
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Run Pattern 1 end to end.")
     parser.add_argument("--doc", default="INV-1001", help="document id to post")
+    parser.add_argument(
+        "--invoice-file",
+        default=None,
+        help="path to a JSON file with your own invoice (overrides --doc)",
+    )
     parser.add_argument(
         "--approve", choices=["ask", "yes", "no"], default="ask", help="human decision"
     )
@@ -75,14 +119,19 @@ def main() -> None:
     else:
         proposer = RuleBasedProposer()
 
-    client = GovernedSapClient(
-        MockSapClient(), entitlements={"read", "stage", "confirm"}
-    )
+    mock = MockSapClient()
+    doc_id = args.doc
+    if args.invoice_file:
+        invoice = load_invoice_file(args.invoice_file)
+        mock.register_document(invoice)
+        doc_id = invoice.doc_id
+
+    client = GovernedSapClient(mock, entitlements={"read", "stage", "confirm"})
 
     result = run_pattern1(
         client,
         proposer,
-        args.doc,
+        doc_id,
         posting_date="2026-06-27",
         config=default_config(),
         approve=make_approver(args.approve),
