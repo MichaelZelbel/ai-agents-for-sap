@@ -57,12 +57,30 @@ def _seed_business_partners() -> set[str]:
     return {"Office Supplies Co", "Cloud Hosting Ltd", "Meridian Interiors GmbH"}
 
 
+def _seed_tax_codes() -> dict[str, Decimal]:
+    """Valid tax codes and the rate each one means. A posting must carry a known
+    code, and the code has to match the invoice's actual tax rate."""
+    return {
+        "V0": Decimal("0.00"),  # no tax
+        "V1": Decimal("0.19"),  # standard rate
+        "V2": Decimal("0.07"),  # reduced rate
+    }
+
+
+def _seed_cost_centers() -> set[str]:
+    """Cost centers that exist and are active. A posting to an unknown or blocked
+    cost center is refused."""
+    return {"CC-1000", "CC-2000"}
+
+
 class MockSapClient:
     """In-memory stand-in for SAP. Implements the SapClient interface."""
 
     def __init__(self) -> None:
         self._documents = _seed_documents()
         self._business_partners = _seed_business_partners()
+        self._tax_codes = _seed_tax_codes()
+        self._cost_centers = _seed_cost_centers()
         self._staged: dict[str, StagedPosting] = {}
         self._posted: dict[str, PostingResult] = {}
         self._staged_seq = count(1)
@@ -83,6 +101,14 @@ class MockSapClient:
         """Onboard a vendor into the master. In a real company this is a master-data
         team's job, gated so a posting agent cannot do it alone."""
         self._business_partners.add(name)
+
+    def known_tax_codes(self) -> dict[str, Decimal]:
+        """The valid tax codes and their rates."""
+        return dict(self._tax_codes)
+
+    def active_cost_centers(self) -> frozenset[str]:
+        """The cost centers that exist and are active."""
+        return frozenset(self._cost_centers)
 
     def read_document(self, doc_id: str) -> Document:
         try:

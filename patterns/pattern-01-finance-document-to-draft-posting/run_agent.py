@@ -81,10 +81,12 @@ def load_invoice_file(path: str) -> Document:
 
 def show(document, posting, validation) -> None:
     print(f"\nDocument {document.doc_id} from {document.vendor}")
-    print(f"  gross {document.gross_amount} {document.currency}")
+    conf = "" if document.confidence is None else f", read confidence {document.confidence:.2f}"
+    print(f"  gross {document.gross_amount} {document.currency}{conf}")
     print("\nThe agent proposes this posting:")
     for line in posting.lines:
         print(f"  {line.side:<6} {line.account}  {line.amount} {posting.currency}")
+    print(f"  tax code {posting.tax_code}  cost center {posting.cost_center}")
     print(f"\nThe validator says: {validation.status}")
     for reason in validation.reasons:
         print(f"  - {reason}")
@@ -130,6 +132,17 @@ def main() -> None:
         action="store_true",
         help="if the vendor is not in the master, add it before posting",
     )
+    parser.add_argument(
+        "--cost-center",
+        default="CC-1000",
+        help="cost center for the expense line (CC-1000/CC-2000 are active)",
+    )
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.5,
+        help="reject a read invoice below this confidence (0 turns the check off)",
+    )
     args = parser.parse_args()
 
     if args.proposer == "llm":
@@ -155,7 +168,13 @@ def main() -> None:
 
     client = GovernedSapClient(mock, entitlements={"read", "stage", "confirm"})
 
-    config = replace(default_config(), known_vendors=mock.known_vendors())
+    config = replace(
+        default_config(),
+        known_vendors=mock.known_vendors(),
+        known_tax_codes=mock.known_tax_codes(),
+        active_cost_centers=mock.active_cost_centers(),
+        min_confidence=args.min_confidence if args.min_confidence > 0 else None,
+    )
     result = run_pattern1(
         client,
         proposer,
@@ -163,6 +182,7 @@ def main() -> None:
         posting_date="2026-06-27",
         config=config,
         approve=make_approver(args.approve),
+        cost_center=args.cost_center,
     )
 
     print("\n" + "=" * 48)

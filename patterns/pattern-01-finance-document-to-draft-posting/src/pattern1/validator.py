@@ -17,8 +17,13 @@ from sap_client import Document, ProposedPosting
 class ValidatorConfig:
     allowed_accounts: frozenset[str]
     tolerance: Decimal = Decimal("0.01")
-    # The vendor master. None means "no master data was supplied, skip the check".
+    # Master data and thresholds. Each is None by default, meaning "not supplied,
+    # skip that check", so the validator stays usable without a full mock behind it.
     known_vendors: frozenset[str] | None = None
+    known_tax_codes: dict[str, Decimal] | None = None
+    active_cost_centers: frozenset[str] | None = None
+    min_confidence: float | None = None
+    rate_tolerance: Decimal = Decimal("0.005")
 
 
 def default_config() -> ValidatorConfig:
@@ -85,6 +90,37 @@ def validate_posting(
 
     if config.known_vendors is not None and document.vendor not in config.known_vendors:
         reasons.append(f"Vendor not in master data: {document.vendor}.")
+
+    if config.known_tax_codes is not None:
+        code = posting.tax_code
+        if code not in config.known_tax_codes:
+            reasons.append(f"Tax code {code or '(none)'} is not a valid tax code.")
+        elif document.net_amount != 0:
+            actual = document.tax_amount / document.net_amount
+            expected = config.known_tax_codes[code]
+            if abs(actual - expected) > config.rate_tolerance:
+                reasons.append(
+                    f"Tax code {code} means {expected}, but the invoice tax rate is "
+                    f"{actual.quantize(Decimal('0.001'))}."
+                )
+
+    if (
+        config.active_cost_centers is not None
+        and posting.cost_center not in config.active_cost_centers
+    ):
+        reasons.append(
+            f"Cost center {posting.cost_center or '(none)'} does not exist or is not active."
+        )
+
+    if (
+        config.min_confidence is not None
+        and document.confidence is not None
+        and document.confidence < config.min_confidence
+    ):
+        reasons.append(
+            f"Low reading confidence {document.confidence:.2f} (needs "
+            f"{config.min_confidence:.2f}); the document should be reviewed by a human."
+        )
 
     status = "PASS" if not reasons else "FAIL"
     return ValidationResult(status=status, reasons=reasons)

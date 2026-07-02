@@ -24,6 +24,9 @@ class Document:
     tax_amount: Decimal
     gross_amount: Decimal
     document_date: str  # ISO date, e.g. "2026-06-20"
+    # How sure the reader is it read the document right (0..1). None means "read
+    # from clean fields, not from a scan", so confidence does not apply.
+    confidence: float | None = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,10 @@ class ProposedPosting:
     posting_date: str
     currency: str
     lines: list[PostingLine]
+    # Filled in by tax and cost-center determination (see determination.py), then
+    # checked by the validator against master data.
+    tax_code: str = ""
+    cost_center: str = ""
 
 
 @dataclass(frozen=True)

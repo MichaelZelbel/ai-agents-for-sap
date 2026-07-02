@@ -47,7 +47,7 @@ _SYSTEM = (
 _INSTRUCTION = (
     "Read the attached vendor invoice and return ONLY a JSON object with these "
     "keys: doc_id, vendor, currency, net_amount, tax_amount, gross_amount, "
-    "document_date. No prose.\n\n"
+    "document_date, confidence. No prose.\n\n"
     "Rules:\n"
     "- doc_id is the invoice or document number printed on it.\n"
     "- currency is the ISO 4217 code, for example EUR, USD, GBP.\n"
@@ -55,6 +55,8 @@ _INSTRUCTION = (
     "separators, a dot for the decimal point.\n"
     "- net is the amount before tax, tax is the tax amount, gross is the total due.\n"
     "- document_date is the invoice date in YYYY-MM-DD form.\n"
+    "- confidence is a number from 0 to 1 for how sure you are you read the invoice "
+    "correctly. Be honest: a clean document is near 1, a blurry or partial scan is low.\n"
     "- Report the numbers exactly as printed. Do not correct or recompute them. If "
     "the totals do not add up, report them anyway; the agent's guard will catch it.\n"
     "- If you cannot actually see the invoice, do not guess. Return "
@@ -99,6 +101,7 @@ def parse_document(raw: str) -> Document:
     if "error" in data and "doc_id" not in data:
         raise ExtractionError(f"model could not read the invoice: {data['error']!r}")
     try:
+        confidence = data.get("confidence")
         return Document(
             doc_id=str(data["doc_id"]),
             vendor=str(data["vendor"]),
@@ -107,11 +110,14 @@ def parse_document(raw: str) -> Document:
             tax_amount=Decimal(str(data["tax_amount"])),
             gross_amount=Decimal(str(data["gross_amount"])),
             document_date=str(data["document_date"]),
+            # A reading from a real document carries a confidence; default to fully
+            # confident if the model did not give one, so a missing score never blocks.
+            confidence=float(confidence) if confidence is not None else 1.0,
         )
     except KeyError as exc:
         raise ExtractionError(f"model reply is missing a field: {exc}") from exc
-    except InvalidOperation as exc:
-        raise ExtractionError(f"model returned a non-numeric amount: {exc}") from exc
+    except (InvalidOperation, ValueError) as exc:
+        raise ExtractionError(f"model returned a bad number: {exc}") from exc
 
 
 def _make_openrouter_caller(model: str, api_key: str) -> Callable[[Path], str]:

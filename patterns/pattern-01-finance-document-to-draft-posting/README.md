@@ -34,6 +34,13 @@ it is refused (`Vendor not in master data`), like real SAP. `--auto-onboard` add
 unknown vendor to the master before posting so your own invoices can pass; in a real
 company that onboarding is a separate master-data role.
 
+The guard also checks, against master data: the **tax code** (read from the invoice's
+own rate, and it must match a known code), the **cost center** (`--cost-center`, must
+exist and be active), and, for invoices read from a PDF or image, the reading
+**confidence** (`--min-confidence`, low readings go to a human instead of posting).
+Tax code and cost center are set by a deterministic determination step, not guessed by
+the model.
+
 To use `--proposer llm`, or to read a PDF or image invoice, copy your OpenRouter key
 into a file named `.env` next to `run_agent.py` (`OPENROUTER_API_KEY=sk-or-...`). It is
 git-ignored. `--invoice-file` takes either a `.json` file of fields (copy

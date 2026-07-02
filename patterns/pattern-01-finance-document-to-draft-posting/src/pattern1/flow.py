@@ -14,6 +14,7 @@ from typing import Callable, Optional
 
 from sap_client import Document, GovernedSapClient, PostingResult, ProposedPosting
 
+from .determination import DEFAULT_COST_CENTER, apply_determination
 from .proposer import Proposer
 from .validator import ValidationResult, ValidatorConfig, validate_posting
 
@@ -37,9 +38,12 @@ def run_pattern1(
     posting_date: str,
     config: ValidatorConfig,
     approve: Approve,
+    cost_center: str = DEFAULT_COST_CENTER,
 ) -> FlowResult:
     document = client.read_document(doc_id)
     posting = proposer.propose(document, posting_date=posting_date)
+    # Deterministic tax and cost-center determination, then the rules check both.
+    posting = apply_determination(document, posting, cost_center=cost_center)
 
     validation = validate_posting(document, posting, config=config)
     if validation.status == "FAIL":
