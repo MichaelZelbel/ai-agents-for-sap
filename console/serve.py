@@ -15,8 +15,11 @@ below for another pattern and point the server at it.
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 import sys
+import tempfile
 import webbrowser
 from dataclasses import replace
 from decimal import Decimal
@@ -26,14 +29,33 @@ from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
+PATTERN1 = REPO / "patterns" / "pattern-01-finance-document-to-draft-posting"
 sys.path.insert(0, str(REPO / "shared"))
-sys.path.insert(0, str(REPO / "patterns" / "pattern-01-finance-document-to-draft-posting" / "src"))
+sys.path.insert(0, str(PATTERN1 / "src"))
 
-from sap_client import Document, GovernedSapClient, MockSapClient  # noqa: E402
+from sap_client import (  # noqa: E402
+    Document,
+    ExtractionError,
+    GovernedSapClient,
+    MockSapClient,
+    extract_document,
+)
 
 from pattern1.determination import apply_determination  # noqa: E402
 from pattern1.proposer import RuleBasedProposer  # noqa: E402
 from pattern1.validator import default_config, validate_posting  # noqa: E402
+
+
+def load_dotenv() -> None:
+    """Read the OpenRouter key from a .env file so 'drop a PDF' can call the model."""
+    for env_file in (PATTERN1 / ".env", REPO / ".env"):
+        if not env_file.exists():
+            continue
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
 def _money(d: Decimal) -> str:
@@ -78,6 +100,7 @@ class InvoicePostingAgent:
             known_vendors=self.mock.known_vendors(),
             known_tax_codes=self.mock.known_tax_codes(),
             active_cost_centers=self.mock.active_cost_centers(),
+            min_confidence=0.5,
         )
 
     def _prep(self, doc_id: str):
@@ -165,7 +188,30 @@ class InvoicePostingAgent:
         self.mock.add_business_partner(doc.vendor)  # the master-data step
         return self.detail(doc_id)
 
+    def upload(self, filename: str, content: bytes) -> dict:
+        """Read a dropped invoice (PDF or image) into the inbox with one model call."""
+        suffix = Path(filename).suffix or ".pdf"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+            tf.write(content)
+            temp_path = tf.name
+        try:
+            doc = extract_document(temp_path)
+        except ExtractionError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # network, decode, anything else
+            return {"ok": False, "error": f"could not read the file: {exc}"}
+        finally:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+        self.mock.register_document(doc)
+        if doc.doc_id not in self.doc_ids:
+            self.doc_ids.insert(0, doc.doc_id)
+        return {"ok": True, "id": doc.doc_id}
 
+
+load_dotenv()
 AGENT = InvoicePostingAgent()
 
 
@@ -197,6 +243,10 @@ class Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path).path
         length = int(self.headers.get("Content-Length", 0))
         payload = json.loads(self.rfile.read(length) or b"{}")
+        if route == "/api/upload":
+            content = base64.b64decode(payload.get("content_base64", ""))
+            self._send(AGENT.upload(payload.get("filename", "invoice.pdf"), content))
+            return
         doc_id = payload.get("id", "")
         actions = {"/api/approve": AGENT.approve, "/api/reject": AGENT.reject, "/api/onboard": AGENT.onboard}
         if route in actions:

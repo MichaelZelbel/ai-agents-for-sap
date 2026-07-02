@@ -18,8 +18,13 @@ memory. It opens your browser automatically.
 
 ## What you can do
 
-- **See the inbox.** Four documents, each with a status: ready, or an exception with
-  its reason (a total that does not balance, a vendor not in the master).
+- **Drop a real invoice.** Drag a PDF or an image onto the tile at the top of the
+  inbox (or click to choose one). A vision model reads it into the fields, with a read
+  confidence, and it lands in the inbox like any other document. This needs your
+  OpenRouter key in a `.env` file (see the Pattern 1 README); without it the drop
+  reports that it could not read the file, and the seeded documents still work offline.
+- **See the inbox.** Four seeded documents, each with a status: ready, or an exception
+  with its reason (a total that does not balance, a vendor not in the master).
 - **Read the proposal.** The agent's posting lines, the determined tax code and cost
   center, and the guard's PASS or FAIL with reasons.
 - **Approve and post**, or **reject** (nothing is written). Watch the audit trail fill

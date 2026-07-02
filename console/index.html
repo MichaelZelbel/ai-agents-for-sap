@@ -22,6 +22,11 @@
   .row{padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer}
   .row:hover{background:#f2f7fd}
   .row.sel{background:#e8f1fc;box-shadow:inset 3px 0 0 var(--accent)}
+  .dropzone{margin:12px 16px;padding:16px;border:2px dashed #b3c2d1;border-radius:8px;text-align:center;color:var(--muted);cursor:pointer;font-size:13px;line-height:1.4}
+  .dropzone:hover{border-color:var(--accent)}
+  .dropzone.over{border-color:var(--accent);background:#f2f7fd;color:var(--accent)}
+  .dropzone.busy{border-style:solid;border-color:var(--accent);color:var(--accent);cursor:progress}
+  .dropzone .big{font-size:22px;display:block;margin-bottom:4px}
   .row .top{display:flex;justify-content:space-between;align-items:center}
   .row .id{font-weight:600}
   .row .vend{color:var(--muted);font-size:13px;margin-top:2px}
@@ -69,6 +74,11 @@
   <div class="wrap">
     <div class="panel inbox">
       <h2>Inbox</h2>
+      <div id="drop" class="dropzone">
+        <span class="big">&#8681;</span>
+        <span id="drop-label">Drop an invoice PDF or image here, or click to choose</span>
+      </div>
+      <input type="file" id="file" accept=".pdf,.png,.jpg,.jpeg,.webp" hidden>
       <div id="inbox"></div>
     </div>
     <div class="panel detail">
@@ -138,6 +148,38 @@ function renderDetail(d){
       <h3>Audit trail</h3>
       <div class="trail">${trail}<div class="chain">${d.audit.length?("Chain verifies: "+(d.audit_ok?"yes, untampered":"NO")) :""}</div></div>
     </div>`;
+}
+
+// --- Drop a PDF: read it with the vision model, drop it into the inbox ---
+const drop = document.getElementById("drop");
+const fileInput = document.getElementById("file");
+const dropLabel = document.getElementById("drop-label");
+const DROP_TEXT = "Drop an invoice PDF or image here, or click to choose";
+drop.onclick = () => fileInput.click();
+fileInput.onchange = () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); };
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); };
+
+async function uploadFile(file){
+  drop.classList.add("busy");
+  dropLabel.textContent = "Reading " + file.name + " with the model, this takes a few seconds...";
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(",")[1]);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+    const resp = await postJSON("/api/upload", { filename: file.name, content_base64: b64 });
+    if (resp.ok) { dropLabel.textContent = DROP_TEXT; await select(resp.id); }
+    else { dropLabel.textContent = "Could not read that file: " + (resp.error || "error") + ". Click to try another."; await loadInbox(); }
+  } catch (err) {
+    dropLabel.textContent = "Upload failed: " + err + ". Click to try again.";
+  } finally {
+    drop.classList.remove("busy");
+    fileInput.value = "";
+  }
 }
 
 loadInbox();
