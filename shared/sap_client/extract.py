@@ -181,23 +181,30 @@ def parse_document(raw: str) -> Document:
     try:
         confidence = data.get("confidence")
         tax_lines = _parse_tax_lines(data.get("tax_lines"))
-        # For a mixed-rate invoice the totals may be left out; derive them from the
-        # breakdown so net + tax always foots to gross.
-        net = (
-            _parse_amount(data["net_amount"], field="net_amount")
-            if _has("net_amount")
-            else sum((line.net for line in tax_lines), Decimal("0"))
-        )
-        tax = (
-            _parse_amount(data["tax_amount"], field="tax_amount")
-            if _has("tax_amount")
-            else sum((line.tax for line in tax_lines), Decimal("0"))
-        )
-        gross = (
-            _parse_amount(data["gross_amount"], field="gross_amount")
-            if _has("gross_amount")
-            else net + tax
-        )
+        if tax_lines:
+            # A mixed-rate invoice may leave the totals out; derive them from the
+            # breakdown so net + tax always foots to gross.
+            net = (
+                _parse_amount(data["net_amount"], field="net_amount")
+                if _has("net_amount")
+                else sum((line.net for line in tax_lines), Decimal("0"))
+            )
+            tax = (
+                _parse_amount(data["tax_amount"], field="tax_amount")
+                if _has("tax_amount")
+                else sum((line.tax for line in tax_lines), Decimal("0"))
+            )
+            gross = (
+                _parse_amount(data["gross_amount"], field="gross_amount")
+                if _has("gross_amount")
+                else net + tax
+            )
+        else:
+            # Single-rate: the totals are required. A missing or empty amount is a
+            # read failure the reader must report, not paper over with a zero.
+            net = _parse_amount(data["net_amount"], field="net_amount")
+            tax = _parse_amount(data["tax_amount"], field="tax_amount")
+            gross = _parse_amount(data["gross_amount"], field="gross_amount")
         return Document(
             doc_id=str(data["doc_id"]),
             vendor=str(data["vendor"]),
