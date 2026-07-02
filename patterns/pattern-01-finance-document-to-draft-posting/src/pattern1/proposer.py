@@ -35,22 +35,33 @@ class Proposer(Protocol):
 
 
 class RuleBasedProposer:
-    """Maps a vendor invoice to the standard three-line posting.
+    """Maps a vendor invoice to a balanced posting.
 
-    Debit expense (net) + debit input tax (tax), credit accounts payable
-    (gross). Deterministic, so it always proposes a balanced posting.
+    Single rate: debit expense (net) + debit input tax (tax), credit accounts
+    payable (gross). Mixed rates (a hotel bill with 7%, 19% and a 0% levy): one
+    expense debit per bucket, one input-tax debit per taxed bucket, and a single
+    payable credit for the gross. Deterministic, so it always balances.
     """
 
     def propose(self, document: Document, *, posting_date: str) -> ProposedPosting:
+        if document.tax_lines:
+            lines = []
+            for tl in document.tax_lines:
+                lines.append(PostingLine(EXPENSE_ACCOUNT, "debit", tl.net))
+                if tl.tax != 0:
+                    lines.append(PostingLine(INPUT_TAX_ACCOUNT, "debit", tl.tax))
+            lines.append(PostingLine(PAYABLE_ACCOUNT, "credit", document.gross_amount))
+        else:
+            lines = [
+                PostingLine(EXPENSE_ACCOUNT, "debit", document.net_amount),
+                PostingLine(INPUT_TAX_ACCOUNT, "debit", document.tax_amount),
+                PostingLine(PAYABLE_ACCOUNT, "credit", document.gross_amount),
+            ]
         return ProposedPosting(
             doc_id=document.doc_id,
             posting_date=posting_date,
             currency=document.currency,
-            lines=[
-                PostingLine(EXPENSE_ACCOUNT, "debit", document.net_amount),
-                PostingLine(INPUT_TAX_ACCOUNT, "debit", document.tax_amount),
-                PostingLine(PAYABLE_ACCOUNT, "credit", document.gross_amount),
-            ],
+            lines=lines,
         )
 
 
@@ -74,6 +85,24 @@ class ProposerError(RuntimeError):
 
 def build_prompt(document: Document, posting_date: str) -> str:
     """The instruction we hand the model. Plain, and it shows the chart of accounts."""
+    if document.tax_lines:
+        breakdown = "".join(
+            f"  - rate {tl.rate}: net {tl.net}, tax {tl.tax}\n" for tl in document.tax_lines
+        )
+        tax_block = "- tax breakdown (this invoice mixes rates):\n" + breakdown
+        rule = (
+            "Rules: this invoice mixes tax rates. For each rate above, debit the "
+            "expense account for that rate's net and, when the tax is not zero, debit "
+            "input tax for that rate's tax. Then credit accounts payable once for the "
+            "gross amount. Debits must equal credits."
+        )
+    else:
+        tax_block = ""
+        rule = (
+            "Rules: debit the expense account for the net amount, debit input tax for "
+            "the tax amount, and credit accounts payable for the gross amount. Debits "
+            "must equal credits."
+        )
     return (
         "Propose the posting for this vendor invoice.\n\n"
         "Invoice:\n"
@@ -82,14 +111,13 @@ def build_prompt(document: Document, posting_date: str) -> str:
         f"- currency: {document.currency}\n"
         f"- net amount: {document.net_amount}\n"
         f"- tax amount: {document.tax_amount}\n"
-        f"- gross amount: {document.gross_amount}\n\n"
+        f"- gross amount: {document.gross_amount}\n"
+        f"{tax_block}\n"
         "Chart of accounts you may use:\n"
         f"- {EXPENSE_ACCOUNT}: expense\n"
         f"- {INPUT_TAX_ACCOUNT}: input tax\n"
         f"- {PAYABLE_ACCOUNT}: accounts payable\n\n"
-        "Rules: debit the expense account for the net amount, debit input tax for the "
-        "tax amount, and credit accounts payable for the gross amount. Debits must "
-        "equal credits.\n\n"
+        f"{rule}\n\n"
         "Reply with ONLY a JSON object of this shape, no prose:\n"
         '{"lines": [{"account": "600000", "side": "debit", "amount": "1000.00"}]}'
     )

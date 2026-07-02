@@ -26,16 +26,27 @@ _RATE_TOLERANCE = Decimal("0.005")
 DEFAULT_COST_CENTER = "CC-1000"
 
 
-def determine_tax_code(document: Document) -> str:
-    """Read the tax code off the invoice's own net and tax. Returns 'V?' if the
-    rate is not one we recognise, so the validator can reject it."""
-    if document.net_amount == 0:
-        return "V0"
-    rate = document.tax_amount / document.net_amount
+def _code_for_rate(rate: Decimal) -> str:
     for code, standard in _STANDARD_RATES:
         if abs(rate - standard) <= _RATE_TOLERANCE:
             return code
     return "V?"
+
+
+def determine_tax_code(document: Document) -> str:
+    """Read the tax code off the invoice. For a mixed-rate invoice return the codes
+    for every rate (e.g. 'V2+V1+V0'); the validator checks the breakdown itself.
+    Returns 'V?' for a rate we do not recognise, so the validator can reject it."""
+    if document.tax_lines:
+        codes: list[str] = []
+        for line in document.tax_lines:
+            code = _code_for_rate(line.rate)
+            if code not in codes:
+                codes.append(code)
+        return "+".join(codes)
+    if document.net_amount == 0:
+        return "V0"
+    return _code_for_rate(document.tax_amount / document.net_amount)
 
 
 def apply_determination(

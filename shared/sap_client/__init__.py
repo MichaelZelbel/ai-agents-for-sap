@@ -19,6 +19,7 @@ from .models import (
     ProposedPosting,
     Side,
     StagedPosting,
+    TaxLine,
 )
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "ProposedPosting",
     "Side",
     "StagedPosting",
+    "TaxLine",
     "SapClientError",
     "DocumentNotFoundError",
     "StagedPostingNotFoundError",

@@ -14,6 +14,21 @@ Side = Literal["debit", "credit"]
 
 
 @dataclass(frozen=True)
+class TaxLine:
+    """One tax bucket of an invoice: a rate and the net and tax booked at it.
+
+    A plain invoice has one rate. A hotel or catering bill mixes several (a room
+    at 7%, breakfast at 19%, a tourism levy at 0%), and a single net/tax/gross can
+    never foot such a document. When the reader finds a printed VAT breakdown it
+    reports one TaxLine per rate, and the parts sum to the gross.
+    """
+
+    rate: Decimal  # a fraction, e.g. Decimal("0.07") for 7%
+    net: Decimal
+    tax: Decimal
+
+
+@dataclass(frozen=True)
 class Document:
     """A source finance document, e.g. a vendor invoice."""
 
@@ -27,6 +42,9 @@ class Document:
     # How sure the reader is it read the document right (0..1). None means "read
     # from clean fields, not from a scan", so confidence does not apply.
     confidence: float | None = None
+    # The per-rate VAT breakdown, when the invoice mixes tax rates. Empty means
+    # single-rate: use net_amount / tax_amount / gross_amount as before.
+    tax_lines: tuple[TaxLine, ...] = ()
 
 
 @dataclass(frozen=True)

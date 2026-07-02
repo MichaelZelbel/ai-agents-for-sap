@@ -40,6 +40,51 @@ class ValidationResult:
     reasons: list[str]
 
 
+def _code_for_rate(rate: Decimal, config: ValidatorConfig) -> str | None:
+    """The tax code whose standard rate matches, or None if no code fits."""
+    for code, standard in (config.known_tax_codes or {}).items():
+        if abs(rate - standard) <= config.rate_tolerance:
+            return code
+    return None
+
+
+def _pct(rate: Decimal) -> Decimal:
+    return (rate * 100).quantize(Decimal("0.1"))
+
+
+def _check_tax_breakdown(
+    document: Document, config: ValidatorConfig, reasons: list[str]
+) -> None:
+    """A mixed-rate invoice (hotel, catering) has a per-rate breakdown. Check every
+    bucket foots (tax = net * rate), the buckets sum to the invoice totals, and net
+    plus tax equals gross. This replaces the single-rate tax check for such a doc."""
+    tol = config.tolerance
+    net_sum = sum((line.net for line in document.tax_lines), Decimal("0"))
+    tax_sum = sum((line.tax for line in document.tax_lines), Decimal("0"))
+    if abs(net_sum - document.net_amount) > tol:
+        reasons.append(
+            f"Tax lines net {net_sum} does not sum to the invoice net {document.net_amount}."
+        )
+    if abs(tax_sum - document.tax_amount) > tol:
+        reasons.append(
+            f"Tax lines tax {tax_sum} does not sum to the invoice tax {document.tax_amount}."
+        )
+    if abs(document.net_amount + document.tax_amount - document.gross_amount) > tol:
+        reasons.append(
+            f"Net {document.net_amount} plus tax {document.tax_amount} does not equal "
+            f"gross {document.gross_amount}."
+        )
+    for line in document.tax_lines:
+        expected = (line.net * line.rate).quantize(Decimal("0.01"))
+        if abs(line.tax - line.net * line.rate) > tol:
+            reasons.append(
+                f"Tax line at {_pct(line.rate)}% does not foot: net {line.net} implies "
+                f"{expected} tax, not {line.tax}."
+            )
+        if config.known_tax_codes is not None and _code_for_rate(line.rate, config) is None:
+            reasons.append(f"No valid tax code for the {_pct(line.rate)}% tax line.")
+
+
 def validate_posting(
     document: Document, posting: ProposedPosting, *, config: ValidatorConfig
 ) -> ValidationResult:
@@ -91,7 +136,10 @@ def validate_posting(
     if config.known_vendors is not None and document.vendor not in config.known_vendors:
         reasons.append(f"Vendor not in master data: {document.vendor}.")
 
-    if config.known_tax_codes is not None:
+    if document.tax_lines:
+        # Mixed-rate invoice: check the per-rate breakdown instead of one code.
+        _check_tax_breakdown(document, config, reasons)
+    elif config.known_tax_codes is not None:
         code = posting.tax_code
         if code not in config.known_tax_codes:
             reasons.append(f"Tax code {code or '(none)'} is not a valid tax code.")
