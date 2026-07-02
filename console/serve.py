@@ -1,16 +1,17 @@
-"""A small operator console for the agents: an SAP-Fiori-flavored cockpit.
+"""A shared operator console for the agents: an SAP-Fiori-flavored cockpit.
 
 Run it:
 
     python console/serve.py
 
-Then open http://localhost:8000 in your browser. No SAP account, no API key, no
-dependencies. Everything runs in memory against the fake, governed SAP, using the
-same propose -> guard -> approve -> log shape the whole book is built on.
+Then open http://localhost:8000. No SAP account, no dependencies, all in memory.
 
-This first version is wired to Pattern 1 (invoice posting). Because every pattern
-shares that shape, the same console generalises: implement the small Agent adapter
-below for another pattern and point the server at it.
+Every pattern in this repo shares one shape: the AI proposes, a deterministic guard
+checks, a human decides, and the move is logged. So one console fits them all. Each
+agent below fills the same neutral contract, an inbox and a detail with a proposal, a
+verdict, some actions, and a trail, and the same page renders any of them. This build
+ships two agents to prove it: Pattern 1 (invoice posting) and Pattern 2 (document
+triage). Pick between them in the top bar. Adding a third is one more adapter.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ REPO = HERE.parent
 PATTERN1 = REPO / "patterns" / "pattern-01-finance-document-to-draft-posting"
 sys.path.insert(0, str(REPO / "shared"))
 sys.path.insert(0, str(PATTERN1 / "src"))
+sys.path.insert(0, str(REPO / "patterns" / "pattern-02-invoice-triage" / "src"))
 
 from sap_client import (  # noqa: E402
     Document,
@@ -44,6 +46,7 @@ from sap_client import (  # noqa: E402
 from pattern1.determination import apply_determination  # noqa: E402
 from pattern1.proposer import RuleBasedProposer  # noqa: E402
 from pattern1.validator import default_config, validate_posting  # noqa: E402
+from triage import CATEGORIES, ROUTES, TriageError, route  # noqa: E402
 
 
 def load_dotenv() -> None:
@@ -62,134 +65,23 @@ def _money(d: Decimal) -> str:
     return f"{d:.2f}"
 
 
-class InvoicePostingAgent:
-    """The Pattern 1 agent, as the console sees it: an inbox of documents, a
-    proposal and a verdict per document, and approve / reject / onboard actions.
+class DocumentAgent:
+    """Shared plumbing: an in-memory SAP with an inbox of documents, and the drop-a-PDF
+    upload. Subclasses implement inbox(), detail(id), and act(action, id)."""
 
-    Another pattern only has to offer the same four calls to reuse the console.
-    """
-
-    title = "Nordwind AP Cockpit"
-    actor = "invoice-agent@nordwind"
+    agent_id = ""
+    title = ""
+    actor = ""
 
     def __init__(self) -> None:
         self.mock = MockSapClient()
-        # An invoice from a vendor SAP does not know yet, to show the exception.
-        self.mock.register_document(
-            Document(
-                doc_id="EXT-2001",
-                vendor="Helvetica Print AG",
-                currency="EUR",
-                net_amount=Decimal("800.00"),
-                tax_amount=Decimal("152.00"),
-                gross_amount=Decimal("952.00"),
-                document_date="2026-06-25",
-            )
-        )
-        self.client = GovernedSapClient(
-            self.mock, entitlements={"read", "stage", "confirm"}, actor=self.actor
-        )
-        self.proposer = RuleBasedProposer()
-        self.doc_ids = ["INV-1001", "INV-1002", "INV-1003", "EXT-2001"]
-        self.posted: dict[str, str] = {}
-        self.rejected: set[str] = set()
+        self.doc_ids: list[str] = ["INV-1001", "INV-1002", "INV-1003"]
+        self.setup()
 
-    def _config(self):
-        return replace(
-            default_config(),
-            known_vendors=self.mock.known_vendors(),
-            known_tax_codes=self.mock.known_tax_codes(),
-            active_cost_centers=self.mock.active_cost_centers(),
-            min_confidence=0.5,
-        )
-
-    def _prep(self, doc_id: str):
-        doc = self.mock.read_document(doc_id)
-        posting = apply_determination(
-            doc, self.proposer.propose(doc, posting_date="2026-06-27")
-        )
-        verdict = validate_posting(doc, posting, config=self._config())
-        return doc, posting, verdict
-
-    def _status(self, doc_id: str, verdict) -> str:
-        if doc_id in self.posted:
-            return "posted"
-        if doc_id in self.rejected:
-            return "rejected"
-        return "ready" if verdict.status == "PASS" else "exception"
-
-    def inbox(self) -> dict:
-        items = []
-        for doc_id in self.doc_ids:
-            doc, _posting, verdict = self._prep(doc_id)
-            items.append(
-                {
-                    "id": doc.doc_id,
-                    "vendor": doc.vendor,
-                    "amount": _money(doc.gross_amount),
-                    "currency": doc.currency,
-                    "status": self._status(doc_id, verdict),
-                    "reason": verdict.reasons[0] if verdict.reasons else "",
-                }
-            )
-        return {"title": self.title, "actor": self.actor, "items": items}
-
-    def detail(self, doc_id: str) -> dict:
-        doc, posting, verdict = self._prep(doc_id)
-        status = self._status(doc_id, verdict)
-        unknown_vendor = any("master data" in r for r in verdict.reasons)
-        return {
-            "id": doc.doc_id,
-            "vendor": doc.vendor,
-            "currency": doc.currency,
-            "net": _money(doc.net_amount),
-            "tax": _money(doc.tax_amount),
-            "gross": _money(doc.gross_amount),
-            "date": doc.document_date,
-            "confidence": doc.confidence,
-            "tax_code": posting.tax_code,
-            "cost_center": posting.cost_center,
-            "lines": [
-                {"account": ln.account, "side": ln.side, "amount": _money(ln.amount)}
-                for ln in posting.lines
-            ],
-            "verdict": verdict.status,
-            "reasons": list(verdict.reasons),
-            "status": status,
-            "can_onboard": status == "exception" and unknown_vendor,
-            "posting_id": self.posted.get(doc_id, ""),
-            "audit": [
-                {"op": e.operation, "target": e.target, "outcome": e.outcome, "actor": e.actor}
-                for e in self.client.audit_log
-            ],
-            "audit_ok": self.client.verify_audit(),
-        }
-
-    def approve(self, doc_id: str) -> dict:
-        doc = self.client.read_document(doc_id)
-        posting = apply_determination(
-            doc, self.proposer.propose(doc, posting_date="2026-06-27")
-        )
-        verdict = validate_posting(doc, posting, config=self._config())
-        if verdict.status != "PASS":
-            return self.detail(doc_id)
-        staged = self.client.stage_posting(posting)
-        self.client.record_approval(staged.staged_id, approver="human (console)")
-        result = self.client.confirm_posting(staged.staged_id)
-        self.posted[doc_id] = result.posting_id
-        return self.detail(doc_id)
-
-    def reject(self, doc_id: str) -> dict:
-        self.rejected.add(doc_id)
-        return self.detail(doc_id)
-
-    def onboard(self, doc_id: str) -> dict:
-        doc = self.mock.read_document(doc_id)
-        self.mock.add_business_partner(doc.vendor)  # the master-data step
-        return self.detail(doc_id)
+    def setup(self) -> None:  # subclasses add demo documents
+        pass
 
     def upload(self, filename: str, content: bytes) -> dict:
-        """Read a dropped invoice (PDF or image) into the inbox with one model call."""
         suffix = Path(filename).suffix or ".pdf"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
             tf.write(content)
@@ -198,7 +90,7 @@ class InvoicePostingAgent:
             doc = extract_document(temp_path)
         except ExtractionError as exc:
             return {"ok": False, "error": str(exc)}
-        except Exception as exc:  # network, decode, anything else
+        except Exception as exc:
             return {"ok": False, "error": f"could not read the file: {exc}"}
         finally:
             try:
@@ -211,8 +103,197 @@ class InvoicePostingAgent:
         return {"ok": True, "id": doc.doc_id}
 
 
+class InvoicePostingAgent(DocumentAgent):
+    """Pattern 1: read an invoice, propose a posting, guard it, approve, post."""
+
+    agent_id = "invoice"
+    title = "Nordwind AP Cockpit"
+    actor = "invoice-agent@nordwind"
+
+    def setup(self) -> None:
+        self.mock.register_document(
+            Document("EXT-2001", "Helvetica Print AG", "EUR", Decimal("800.00"),
+                     Decimal("152.00"), Decimal("952.00"), "2026-06-25")
+        )
+        self.doc_ids.append("EXT-2001")
+        self.client = GovernedSapClient(
+            self.mock, entitlements={"read", "stage", "confirm"}, actor=self.actor
+        )
+        self.proposer = RuleBasedProposer()
+        self.posted: dict[str, str] = {}
+        self.rejected: set[str] = set()
+
+    def _config(self):
+        return replace(
+            default_config(),
+            known_vendors=self.mock.known_vendors(),
+            known_tax_codes=self.mock.known_tax_codes(),
+            active_cost_centers=self.mock.active_cost_centers(),
+            min_confidence=0.5,
+        )
+
+    def _prep(self, doc_id):
+        doc = self.mock.read_document(doc_id)
+        posting = apply_determination(doc, self.proposer.propose(doc, posting_date="2026-06-27"))
+        return doc, posting, validate_posting(doc, posting, config=self._config())
+
+    def _status(self, doc_id, verdict):
+        if doc_id in self.posted:
+            return "posted"
+        if doc_id in self.rejected:
+            return "rejected"
+        return "ready" if verdict.status == "PASS" else "exception"
+
+    def inbox(self):
+        items = []
+        for did in self.doc_ids:
+            doc, _p, verdict = self._prep(did)
+            items.append({"id": doc.doc_id, "primary": doc.vendor,
+                          "secondary": f"{_money(doc.gross_amount)} {doc.currency}",
+                          "status": self._status(did, verdict),
+                          "reason": verdict.reasons[0] if verdict.reasons else ""})
+        return items
+
+    def detail(self, doc_id):
+        doc, posting, verdict = self._prep(doc_id)
+        status = self._status(doc_id, verdict)
+        header = [["Date", doc.document_date], ["Net", _money(doc.net_amount)],
+                  ["Tax", _money(doc.tax_amount)], ["Gross", f"{_money(doc.gross_amount)} {doc.currency}"]]
+        if doc.confidence is not None:
+            header.append(["Read confidence", f"{doc.confidence * 100:.0f}%"])
+        can_onboard = status == "exception" and any("master data" in r for r in verdict.reasons)
+        actions = [
+            {"action": "approve", "label": "Approve & Post", "style": "approve", "enabled": status == "ready"},
+            {"action": "reject", "label": "Reject", "style": "reject", "enabled": status in ("ready", "exception")},
+        ]
+        if can_onboard:
+            actions.append({"action": "onboard", "label": "Onboard vendor", "style": "onboard", "enabled": True})
+        result = ""
+        if status == "posted":
+            result = f"Posted as {self.posted[doc_id]}"
+        elif status == "rejected":
+            result = "Rejected. Nothing was written."
+        audit = [f"{e.operation:<8} {e.target:<14} {e.outcome} · {e.actor}" for e in self.client.audit_log]
+        return {
+            "id": doc.doc_id, "title": f"{doc.doc_id} · {doc.vendor}", "header": header,
+            "proposal_title": "Proposed posting",
+            "columns": ["Side", "Account", "Amount"],
+            "rows": [[ln.side, ln.account, f"{_money(ln.amount)} {doc.currency}"] for ln in posting.lines],
+            "note": f"Tax code {posting.tax_code} · Cost center {posting.cost_center}",
+            "verdict": verdict.status, "verdict_label": f"Guard: {verdict.status}",
+            "reasons": list(verdict.reasons), "status": status, "actions": actions, "result": result,
+            "audit": audit, "audit_ok": self.client.verify_audit() if audit else None,
+        }
+
+    def act(self, action, doc_id):
+        if action == "approve":
+            doc = self.client.read_document(doc_id)
+            posting = apply_determination(doc, self.proposer.propose(doc, posting_date="2026-06-27"))
+            if validate_posting(doc, posting, config=self._config()).status == "PASS":
+                staged = self.client.stage_posting(posting)
+                self.client.record_approval(staged.staged_id, approver="human (console)")
+                self.posted[doc_id] = self.client.confirm_posting(staged.staged_id).posting_id
+        elif action == "reject":
+            self.rejected.add(doc_id)
+        elif action == "onboard":
+            self.mock.add_business_partner(self.mock.read_document(doc_id).vendor)
+        return self.detail(doc_id)
+
+
+class TriageAgent(DocumentAgent):
+    """Pattern 2: read a document, classify it, and route it. No posting at all."""
+
+    agent_id = "triage"
+    title = "AP Triage Desk"
+    actor = "triage-agent@nordwind"
+
+    def setup(self) -> None:
+        self.confirmed: dict[str, str] = {}
+        self.rejected: set[str] = set()
+
+    def _classify(self, doc):
+        # A crude offline classifier (same idea as the pattern's rule stand-in): a
+        # document with no amount is not an invoice; a larger one references a PO.
+        if doc.gross_amount == 0:
+            return "not_an_invoice"
+        return "po_invoice" if doc.gross_amount >= Decimal("1000") else "direct_expense"
+
+    def _route(self, category):
+        try:
+            return route(category), ""
+        except TriageError as exc:
+            return "", str(exc)
+
+    def _status(self, doc_id):
+        if doc_id in self.confirmed:
+            return "done"
+        if doc_id in self.rejected:
+            return "rejected"
+        return "ready"
+
+    def inbox(self):
+        items = []
+        for did in self.doc_ids:
+            doc = self.mock.read_document(did)
+            category = self._classify(doc)
+            dest, err = self._route(category)
+            items.append({"id": did, "primary": doc.vendor,
+                          "secondary": f"{_money(doc.gross_amount)} {doc.currency}",
+                          "status": "exception" if err else self._status(did),
+                          "reason": err})
+        return items
+
+    def detail(self, doc_id):
+        doc = self.mock.read_document(doc_id)
+        category = self._classify(doc)
+        dest, err = self._route(category)
+        status = "exception" if err else self._status(doc_id)
+        audit = [f"classified  {doc_id:<14} as {category}"]
+        if not err:
+            audit.append(f"router      {doc_id:<14} accepted -> {dest}")
+        if doc_id in self.confirmed:
+            audit.append(f"confirmed   {doc_id:<14} routed -> {self.confirmed[doc_id]} · human (console)")
+        result = ""
+        if doc_id in self.confirmed:
+            result = f"Confirmed. Routed to: {self.confirmed[doc_id]}"
+        elif doc_id in self.rejected:
+            result = "Rejected. Sent back for manual triage."
+        return {
+            "id": doc_id, "title": f"{doc_id} · {doc.vendor}",
+            "header": [["Vendor", doc.vendor], ["Net", _money(doc.net_amount)],
+                       ["Tax", _money(doc.tax_amount)], ["Gross", f"{_money(doc.gross_amount)} {doc.currency}"]],
+            "proposal_title": "Proposed routing",
+            "columns": ["Category", "Routes to"],
+            "rows": [[category, dest or "(refused)"]],
+            "note": "The model proposes a category; the router only accepts one of: " + ", ".join(CATEGORIES),
+            "verdict": "FAIL" if err else "PASS",
+            "verdict_label": "Router: refused" if err else "Router: accepted",
+            "reasons": [err] if err else [], "status": status,
+            "actions": [
+                {"action": "confirm", "label": "Confirm routing", "style": "approve", "enabled": status == "ready"},
+                {"action": "reject", "label": "Reject", "style": "reject", "enabled": status == "ready"},
+            ],
+            "result": result, "audit": audit, "audit_ok": None,
+        }
+
+    def act(self, action, doc_id):
+        if action == "confirm":
+            doc = self.mock.read_document(doc_id)
+            dest, err = self._route(self._classify(doc))
+            if not err:
+                self.confirmed[doc_id] = dest
+        elif action == "reject":
+            self.rejected.add(doc_id)
+        return self.detail(doc_id)
+
+
 load_dotenv()
-AGENT = InvoicePostingAgent()
+AGENTS: dict[str, DocumentAgent] = {a.agent_id: a for a in (InvoicePostingAgent(), TriageAgent())}
+DEFAULT_AGENT = "invoice"
+
+
+def pick(name):
+    return AGENTS.get(name or DEFAULT_AGENT, AGENTS[DEFAULT_AGENT])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -224,49 +305,47 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _doc_id(self):
-        qs = parse_qs(urlparse(self.path).query)
-        return (qs.get("id") or [""])[0]
+    def _q(self, key):
+        return (parse_qs(urlparse(self.path).query).get(key) or [""])[0]
 
     def do_GET(self):
-        route = urlparse(self.path).path
-        if route in ("/", "/index.html"):
+        route_ = urlparse(self.path).path
+        if route_ in ("/", "/index.html"):
             self._send((HERE / "index.html").read_bytes(), ctype="text/html; charset=utf-8")
-        elif route == "/api/inbox":
-            self._send(AGENT.inbox())
-        elif route == "/api/document":
-            self._send(AGENT.detail(self._doc_id()))
+        elif route_ == "/api/agents":
+            self._send([{"id": a.agent_id, "title": a.title, "actor": a.actor} for a in AGENTS.values()])
+        elif route_ == "/api/inbox":
+            self._send({"items": pick(self._q("agent")).inbox()})
+        elif route_ == "/api/document":
+            self._send(pick(self._q("agent")).detail(self._q("id")))
         else:
             self._send({"error": "not found"}, status=404)
 
     def do_POST(self):
-        route = urlparse(self.path).path
+        route_ = urlparse(self.path).path
         length = int(self.headers.get("Content-Length", 0))
         payload = json.loads(self.rfile.read(length) or b"{}")
-        if route == "/api/upload":
+        agent = pick(payload.get("agent"))
+        if route_ == "/api/upload":
             content = base64.b64decode(payload.get("content_base64", ""))
-            self._send(AGENT.upload(payload.get("filename", "invoice.pdf"), content))
-            return
-        doc_id = payload.get("id", "")
-        actions = {"/api/approve": AGENT.approve, "/api/reject": AGENT.reject, "/api/onboard": AGENT.onboard}
-        if route in actions:
-            self._send(actions[route](doc_id))
+            self._send(agent.upload(payload.get("filename", "invoice.pdf"), content))
+        elif route_ == "/api/act":
+            self._send(agent.act(payload.get("action", ""), payload.get("id", "")))
         else:
             self._send({"error": "not found"}, status=404)
 
-    def log_message(self, *args):  # keep the console quiet
+    def log_message(self, *args):
         pass
 
 
 def main() -> None:
-    port = 8000
-    url = f"http://localhost:{port}"
-    print(f"{AGENT.title} running at {url}  (Ctrl+C to stop)")
+    url = "http://localhost:8000"
+    print(f"Operator console running at {url}  (Ctrl+C to stop)")
     try:
         webbrowser.open(url)
     except Exception:
         pass
-    ThreadingHTTPServer(("localhost", port), Handler).serve_forever()
+    ThreadingHTTPServer(("localhost", 8000), Handler).serve_forever()
 
 
 if __name__ == "__main__":

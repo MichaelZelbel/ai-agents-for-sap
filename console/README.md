@@ -2,10 +2,14 @@
 
 A small, SAP-Fiori-flavored console for the agents. It gives the propose → guard →
 approve → log flow a face: an inbox of documents, the agent's proposal, the guard's
-verdict, and Approve / Reject / Onboard buttons, with the tamper-evident audit trail
-right there.
+verdict, action buttons, and the audit trail right there.
 
-![The cockpit](console.png)
+One console, more than one agent. Ships wired to **two** patterns, switched from the
+picker in the top bar: Pattern 1 (invoice posting) and Pattern 2 (document triage).
+
+![Pattern 1: invoice posting](console.png)
+
+![Pattern 2: document triage, same console](console-triage.png)
 
 ## Run it
 
@@ -33,11 +37,20 @@ memory. It opens your browser automatically.
   Partner to the master and the invoice becomes ready, the way a master-data team
   resolves it.
 
+Note: the drop-a-PDF tile and Pattern 1's tax/cost/confidence checks are on the
+invoice agent; the triage agent classifies a document and routes it, with no posting
+at all. Same screen, different job.
+
 ## How it generalises
 
-Every pattern in this repo shares the same shape, so one console fits them all. The
-server talks to a small `InvoicePostingAgent` adapter (inbox, detail, approve, reject,
-onboard) wired to Pattern 1. To put another pattern behind the same cockpit, implement
-those calls for it and point the server at it. Nothing in the page changes.
+Every pattern in this repo shares the same shape, so one console fits them all, and
+this build proves it with two. Each agent fills one neutral contract, an inbox and a
+detail with a proposal (a table), a verdict, some actions, and a trail, and the same
+page renders any of them. `InvoicePostingAgent` returns posting lines and Approve /
+Reject / Onboard; `TriageAgent` returns a category and its route and Confirm / Reject.
+The page does not know or care which pattern it is showing.
+
+To add a third, write one more adapter (`inbox`, `detail`, `act`) and register it in
+`AGENTS`. It appears in the picker; nothing in the page changes.
 
 Built with the Python standard library only (`http.server`) plus one static HTML page.

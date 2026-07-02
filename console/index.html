@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nordwind AP Cockpit</title>
+<title>Operator Console</title>
 <style>
   :root{
     --shell:#354a5f; --accent:#0a6ed1; --bg:#f7f7f7; --card:#fff; --line:#e5e5e5;
@@ -14,6 +14,8 @@
   .shell{background:var(--shell);color:#fff;height:48px;display:flex;align-items:center;padding:0 16px;gap:12px}
   .shell .logo{width:24px;height:24px;border-radius:4px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
   .shell .title{font-weight:600}
+  .shell select{margin-left:8px;background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:6px;padding:4px 8px;font:inherit}
+  .shell select option{color:#000}
   .shell .actor{margin-left:auto;opacity:.85;font-size:13px}
   .wrap{display:flex;gap:16px;padding:16px;align-items:flex-start}
   .panel{background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
@@ -34,7 +36,7 @@
   .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600}
   .pill.ready{background:#ebf5eb;color:var(--pos)}
   .pill.exception{background:#fdf0e5;color:var(--crit)}
-  .pill.posted{background:#e8f1fc;color:var(--accent)}
+  .pill.posted,.pill.done{background:#e8f1fc;color:var(--accent)}
   .pill.rejected{background:#f0f0f0;color:var(--muted)}
   .detail{flex:1;min-width:0}
   .detail .body{padding:16px}
@@ -47,9 +49,11 @@
   table{width:100%;border-collapse:collapse;margin:8px 0}
   th{text-align:left;font-size:12px;text-transform:uppercase;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line)}
   td{padding:6px 8px;border-bottom:1px solid #f0f0f0;font-variant-numeric:tabular-nums}
+  .plabel{font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px}
   .banner{padding:10px 14px;border-radius:6px;margin:14px 0;font-weight:600}
   .banner.pass{background:#ebf5eb;color:var(--pos);border:1px solid #b5dcb5}
   .banner.fail{background:#fdeaea;color:var(--neg);border:1px solid #f0c0c0}
+  .banner.neutral{background:#f0f0f0;color:var(--muted)}
   .banner ul{margin:6px 0 0;padding-left:18px;font-weight:400}
   .actions{display:flex;gap:10px;margin:16px 0}
   button{font:inherit;padding:8px 18px;border-radius:6px;border:1px solid var(--accent);cursor:pointer}
@@ -60,15 +64,15 @@
   .audit{margin-top:20px}
   .audit h3{font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.04em}
   .trail{font-family:"Courier New",monospace;font-size:13px;background:#fafafa;border:1px solid var(--line);border-radius:6px;padding:10px}
-  .trail .line{padding:2px 0;color:#444}
-  .trail .ok{color:var(--pos)}
+  .trail .line{padding:2px 0;color:#444;white-space:pre}
   .chain{margin-top:6px;font-size:12px;color:var(--pos)}
 </style>
 </head>
 <body>
   <div class="shell">
     <div class="logo">N</div>
-    <div class="title" id="title">Nordwind AP Cockpit</div>
+    <div class="title" id="title">Operator Console</div>
+    <select id="picker" onchange="switchAgent()"></select>
     <div class="actor" id="actor"></div>
   </div>
   <div class="wrap">
@@ -88,72 +92,72 @@
   </div>
 
 <script>
-let selected = null;
+let agent = null, selected = null, agents = [];
 
 async function getJSON(url){ const r = await fetch(url); return r.json(); }
 async function postJSON(url, body){ const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); return r.json(); }
 
-function pill(s){ const label={ready:"Ready",exception:"Exception",posted:"Posted",rejected:"Rejected"}[s]||s; return `<span class="pill ${s}">${label}</span>`; }
+function pill(s){ const label={ready:"Ready",exception:"Exception",posted:"Posted",done:"Done",rejected:"Rejected"}[s]||s; return `<span class="pill ${s}">${label}</span>`; }
+function esc(x){ return String(x).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+async function loadAgents(){
+  agents = await getJSON("/api/agents");
+  agent = agents[0].id;
+  document.getElementById("picker").innerHTML = agents.map(a=>`<option value="${a.id}">${esc(a.title)}</option>`).join("");
+  applyAgentChrome();
+  await loadInbox();
+}
+function applyAgentChrome(){
+  const a = agents.find(x=>x.id===agent);
+  document.getElementById("title").textContent = a.title;
+  document.getElementById("actor").textContent = a.actor;
+}
+async function switchAgent(){
+  agent = document.getElementById("picker").value;
+  selected = null;
+  applyAgentChrome();
+  document.getElementById("detail").innerHTML = `<div class="empty">Select a document from the inbox.</div>`;
+  await loadInbox();
+}
 
 async function loadInbox(){
-  const data = await getJSON("/api/inbox");
-  document.getElementById("title").textContent = data.title;
-  document.getElementById("actor").textContent = data.actor;
+  const data = await getJSON("/api/inbox?agent="+agent);
   document.getElementById("inbox").innerHTML = data.items.map(it => `
     <div class="row ${it.id===selected?'sel':''}" onclick="select('${it.id}')">
-      <div class="top"><span class="id">${it.id}</span>${pill(it.status)}</div>
-      <div class="vend">${it.vendor}</div>
-      <div class="top"><span class="amt">${it.amount} ${it.currency}</span></div>
-      ${it.reason?`<div class="vend" style="color:var(--crit)">${it.reason}</div>`:``}
+      <div class="top"><span class="id">${esc(it.id)}</span>${pill(it.status)}</div>
+      <div class="vend">${esc(it.primary)}</div>
+      <div class="top"><span class="amt">${esc(it.secondary)}</span></div>
+      ${it.reason?`<div class="vend" style="color:var(--crit)">${esc(it.reason)}</div>`:``}
     </div>`).join("");
 }
 
-async function select(id){ selected = id; await loadInbox(); renderDetail(await getJSON("/api/document?id="+id)); }
-async function act(url){ const d = await postJSON(url,{id:selected}); await loadInbox(); renderDetail(d); }
+async function select(id){ selected = id; await loadInbox(); renderDetail(await getJSON(`/api/document?agent=${agent}&id=${id}`)); }
+async function act(action){ const d = await postJSON("/api/act",{agent,id:selected,action}); await loadInbox(); renderDetail(d); }
 
 function renderDetail(d){
-  const rows = d.lines.map(l=>`<tr><td>${l.side}</td><td>${l.account}</td><td style="text-align:right">${l.amount} ${d.currency}</td></tr>`).join("");
-  const conf = d.confidence==null ? "" : `<span><b>Read confidence</b> ${(d.confidence*100).toFixed(0)}%</span>`;
-  const banner = d.verdict==="PASS"
-    ? `<div class="banner pass">Guard: PASS</div>`
-    : `<div class="banner fail">Guard: FAIL<ul>${d.reasons.map(r=>`<li>${r}</li>`).join("")}</ul></div>`;
-  const canApprove = d.status==="ready";
-  const posted = d.status==="posted";
-  const actions = posted
-    ? `<div class="banner pass">Posted as ${d.posting_id}</div>`
-    : d.status==="rejected"
-    ? `<div class="banner" style="background:#f0f0f0;color:var(--muted)">Rejected. Nothing was written.</div>`
-    : `<div class="actions">
-         <button class="b-approve" ${canApprove?"":"disabled"} onclick="act('/api/approve')">Approve &amp; Post</button>
-         <button class="b-reject" onclick="act('/api/reject')">Reject</button>
-         ${d.can_onboard?`<button class="b-onboard" onclick="act('/api/onboard')">Onboard vendor</button>`:``}
-       </div>`;
-  const trail = d.audit.length
-    ? d.audit.map(e=>`<div class="line"><span class="ok">${e.op.padEnd(8)}</span> ${e.target.padEnd(14)} ${e.outcome} <span style="color:#999">· ${e.actor}</span></div>`).join("")
-    : `<div class="line" style="color:#999">No actions yet. Approving posts it and writes the trail.</div>`;
+  const chips = d.header.map(h=>`<span><b>${esc(h[0])}</b> ${esc(h[1])}</span>`).join("");
+  const cols = d.columns.map((c,i)=>`<th${i===d.columns.length-1?' style="text-align:right"':''}>${esc(c)}</th>`).join("");
+  const rows = d.rows.map(r=>`<tr>${r.map((c,i)=>`<td${i===r.length-1?' style="text-align:right"':''}>${esc(c)}</td>`).join("")}</tr>`).join("");
+  const banner = d.verdict==="PASS" ? `<div class="banner pass">${esc(d.verdict_label)}</div>`
+    : d.verdict==="FAIL" ? `<div class="banner fail">${esc(d.verdict_label)}<ul>${d.reasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul></div>` : ``;
+  const controls = d.result
+    ? `<div class="banner ${d.status==='rejected'?'neutral':'pass'}">${esc(d.result)}</div>`
+    : `<div class="actions">${d.actions.map(a=>`<button class="b-${a.style}" ${a.enabled?"":"disabled"} onclick="act('${a.action}')">${esc(a.label)}</button>`).join("")}</div>`;
+  const trail = d.audit.length ? d.audit.map(l=>`<div class="line">${esc(l)}</div>`).join("") : `<div class="line" style="color:#999">No actions yet.</div>`;
+  const chain = d.audit_ok==null ? `` : `<div class="chain">Chain verifies: ${d.audit_ok?"yes, untampered":"NO"}</div>`;
   document.getElementById("detail").innerHTML = `
-    <div class="head">
-      <div><div class="h-id">${d.id}</div><div class="h-vend">${d.vendor}</div></div>
-      ${pill(d.status)}
-    </div>
-    <div class="kv"><span><b>Date</b> ${d.date}</span><span><b>Net</b> ${d.net}</span><span><b>Tax</b> ${d.tax}</span><span><b>Gross</b> ${d.gross} ${d.currency}</span>${conf}</div>
-    <table>
-      <tr><th>Side</th><th>Account</th><th style="text-align:right">Amount</th></tr>
-      ${rows}
-    </table>
-    <div class="kv"><span><b>Tax code</b> ${d.tax_code}</span><span><b>Cost center</b> ${d.cost_center}</span></div>
+    <div class="head"><div><div class="h-id">${esc(d.id)}</div><div class="h-vend">${esc(d.title.split(' · ').slice(1).join(' · '))}</div></div>${pill(d.status)}</div>
+    <div class="kv">${chips}</div>
+    <div class="plabel">${esc(d.proposal_title)}</div>
+    <table><tr>${cols}</tr>${rows}</table>
+    ${d.note?`<div class="kv" style="margin-top:2px"><span>${esc(d.note)}</span></div>`:``}
     ${banner}
-    ${actions}
-    <div class="audit">
-      <h3>Audit trail</h3>
-      <div class="trail">${trail}<div class="chain">${d.audit.length?("Chain verifies: "+(d.audit_ok?"yes, untampered":"NO")) :""}</div></div>
-    </div>`;
+    ${controls}
+    <div class="audit"><h3>Trail</h3><div class="trail">${trail}${chain}</div></div>`;
 }
 
 // --- Drop a PDF: read it with the vision model, drop it into the inbox ---
-const drop = document.getElementById("drop");
-const fileInput = document.getElementById("file");
-const dropLabel = document.getElementById("drop-label");
+const drop = document.getElementById("drop"), fileInput = document.getElementById("file"), dropLabel = document.getElementById("drop-label");
 const DROP_TEXT = "Drop an invoice PDF or image here, or click to choose";
 drop.onclick = () => fileInput.click();
 fileInput.onchange = () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); };
@@ -165,24 +169,15 @@ async function uploadFile(file){
   drop.classList.add("busy");
   dropLabel.textContent = "Reading " + file.name + " with the model, this takes a few seconds...";
   try {
-    const b64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(r.result.split(",")[1]);
-      r.onerror = rej;
-      r.readAsDataURL(file);
-    });
-    const resp = await postJSON("/api/upload", { filename: file.name, content_base64: b64 });
+    const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(file); });
+    const resp = await postJSON("/api/upload", { agent, filename: file.name, content_base64: b64 });
     if (resp.ok) { dropLabel.textContent = DROP_TEXT; await select(resp.id); }
     else { dropLabel.textContent = "Could not read that file: " + (resp.error || "error") + ". Click to try another."; await loadInbox(); }
-  } catch (err) {
-    dropLabel.textContent = "Upload failed: " + err + ". Click to try again.";
-  } finally {
-    drop.classList.remove("busy");
-    fileInput.value = "";
-  }
+  } catch (err) { dropLabel.textContent = "Upload failed: " + err + ". Click to try again."; }
+  finally { drop.classList.remove("busy"); fileInput.value = ""; }
 }
 
-loadInbox();
+loadAgents();
 </script>
 </body>
 </html>
