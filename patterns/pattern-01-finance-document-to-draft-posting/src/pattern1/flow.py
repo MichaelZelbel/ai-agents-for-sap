@@ -15,6 +15,7 @@ from typing import Callable, Optional, Union
 from sap_client import Document, GovernedSapClient, PostingResult, ProposedPosting
 
 from .determination import DEFAULT_COST_CENTER, apply_determination
+from .feedback import Decision, FeedbackStore
 from .proposer import Proposer
 from .validator import ValidationResult, ValidatorConfig, validate_posting
 
@@ -29,11 +30,17 @@ class HumanDecision:
     The rationale is the point. When a reviewer rejects or corrects a draft, the
     reason they type is the signal the learning loop reads to improve the agent.
     That is why it lives on the record, not in someone's head.
+
+    A reviewer can also *correct* the draft, not just accept or refuse it. Setting
+    `corrected_cost_center` means "approve, but book it against this cost center
+    instead." The guard re-checks the corrected posting, and the correction is
+    remembered, so the next invoice from this vendor is proposed with it applied.
     """
 
     approved: bool
     approver: str = DEFAULT_APPROVER
     rationale: str = ""
+    corrected_cost_center: str = ""
 
 
 # Called to get a human decision. May return a HumanDecision (who, and why), or a
@@ -67,11 +74,15 @@ def run_pattern1(
     approve: Approve,
     cost_center: str = DEFAULT_COST_CENTER,
     approver: str = DEFAULT_APPROVER,
+    store: Optional[FeedbackStore] = None,
 ) -> FlowResult:
     document = client.read_document(doc_id)
     posting = proposer.propose(document, posting_date=posting_date)
-    # Deterministic tax and cost-center determination, then the rules check both.
-    posting = apply_determination(document, posting, cost_center=cost_center)
+    # The learning loop, part one: if a human has already moved this vendor's
+    # invoices to a cost center, propose it with that applied. The validator still
+    # checks it below, so a wrong learned value is caught like any other.
+    learned_cc = store.cost_center_for(document.vendor) if store else None
+    posting = apply_determination(document, posting, cost_center=learned_cc or cost_center)
 
     validation = validate_posting(document, posting, config=config)
     if validation.status == "FAIL":
@@ -86,20 +97,68 @@ def run_pattern1(
         client.record_rejection(
             staged.staged_id, approver=decision.approver, rationale=decision.rationale
         )
+        _remember(store, document, doc_id, "rejected", decision)
         return FlowResult(
             outcome="rejected_by_human",
             validation=validation,
             staged_id=staged.staged_id,
         )
 
+    kind = "approved"
+    if decision.corrected_cost_center and decision.corrected_cost_center != posting.cost_center:
+        # The human corrected the draft. Re-check it: even a human's edit must
+        # pass the guard before it can be booked.
+        corrected = apply_determination(
+            document, posting, cost_center=decision.corrected_cost_center
+        )
+        recheck = validate_posting(document, corrected, config=config)
+        if recheck.status == "FAIL":
+            client.record_rejection(
+                staged.staged_id,
+                approver=decision.approver,
+                rationale=f"correction refused by the guard: {recheck.reasons[0]}",
+            )
+            _remember(store, document, doc_id, "rejected", decision)
+            return FlowResult(
+                outcome="rejected_by_validator",
+                validation=recheck,
+                staged_id=staged.staged_id,
+            )
+        staged = client.stage_posting(corrected)
+        posting, validation, kind = corrected, recheck, "corrected"
+
     # A named human approved, with an optional note. Both go on the record.
     client.record_approval(
         staged.staged_id, approver=decision.approver, rationale=decision.rationale
     )
     result = client.confirm_posting(staged.staged_id)
+    _remember(store, document, doc_id, kind, decision)
     return FlowResult(
         outcome="posted",
         validation=validation,
         posting_result=result,
         staged_id=staged.staged_id,
+    )
+
+
+def _remember(
+    store: Optional[FeedbackStore],
+    document: Document,
+    doc_id: str,
+    kind: str,
+    decision: HumanDecision,
+) -> None:
+    """Record the decision so the loop can learn from it and watch the override rate."""
+    if store is None:
+        return
+    store.record(
+        Decision(
+            doc_id=doc_id,
+            vendor=document.vendor,
+            decision=kind,
+            reason=decision.rationale,
+            corrected_cost_center=(
+                decision.corrected_cost_center if kind == "corrected" else ""
+            ),
+        )
     )

@@ -28,3 +28,7 @@ htmlcov/
 
 # Local Claude Code session settings
 .claude/
+
+# Pattern 1 learning-loop runtime memory
+feedback.jsonl
+**/feedback.jsonl

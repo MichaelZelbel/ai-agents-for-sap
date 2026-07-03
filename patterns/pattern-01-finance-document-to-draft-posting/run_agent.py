@@ -10,6 +10,12 @@
     python run_agent.py --proposer llm         # use a real model via OpenRouter
     python run_agent.py --approver j.doe@nordwind        # who approves (on the record)
     python run_agent.py --approve no --rationale "wrong cost center"   # reject with a reason
+    python run_agent.py --approve yes --correct-cost-center CC-2000    # approve, but move it
+
+The learning loop: a correction (or a rejection reason) is remembered per vendor in
+feedback.jsonl. The next invoice from that vendor is proposed with the correction
+already applied, and the run prints the override rate. When that rate crosses
+--override-threshold, it prints a review, so a human looks because the number moved.
 
 You need no SAP account. Everything runs in memory. To read a PDF or image invoice,
 or to use --proposer llm, put your key in a file named .env next to this script:
@@ -39,9 +45,12 @@ from sap_client import (  # noqa: E402
     extract_document,
 )
 
+from pattern1.feedback import FeedbackStore  # noqa: E402
 from pattern1.flow import DEFAULT_APPROVER, HumanDecision, run_pattern1  # noqa: E402
 from pattern1.proposer import LlmBackedProposer, RuleBasedProposer  # noqa: E402
 from pattern1.validator import default_config  # noqa: E402
+
+FEEDBACK_FILE = HERE / "feedback.jsonl"
 
 
 def load_dotenv() -> None:
@@ -94,12 +103,16 @@ def show(document, posting, validation) -> None:
         print(f"  - {reason}")
 
 
-def make_approver(mode: str, approver: str, rationale: str | None):
+def make_approver(mode: str, approver: str, rationale: str | None, correct_cc: str | None):
+    corrected = correct_cc or ""
+
     def approve(document, posting, validation) -> HumanDecision:
         show(document, posting, validation)
         if mode == "yes":
-            print(f"\nHuman decision: APPROVED (auto) by {approver}")
-            return HumanDecision(True, approver, rationale or "")
+            note = "moved to " + corrected if corrected else ""
+            print(f"\nHuman decision: APPROVED (auto) by {approver}"
+                  + (f", corrected cost center to {corrected}" if corrected else ""))
+            return HumanDecision(True, approver, rationale or note, corrected)
         if mode == "no":
             reason = rationale or "auto-reject (scripted)"
             print(f"\nHuman decision: REJECTED (auto) by {approver}")
@@ -112,7 +125,7 @@ def make_approver(mode: str, approver: str, rationale: str | None):
             else "Why? (a note for the learning loop) "
         )
         reason = rationale or input(prompt).strip()
-        return HumanDecision(approved, approver, reason)
+        return HumanDecision(approved, approver, reason, corrected if approved else "")
 
     return approve
 
@@ -163,11 +176,31 @@ def main() -> None:
         default=0.5,
         help="reject a read invoice below this confidence (0 turns the check off)",
     )
+    parser.add_argument(
+        "--correct-cost-center",
+        default=None,
+        help="approve, but move the posting to this cost center (the loop remembers it)",
+    )
+    parser.add_argument(
+        "--override-threshold",
+        type=float,
+        default=0.2,
+        help="raise a review when the override rate climbs above this (0..1)",
+    )
+    parser.add_argument(
+        "--reset-feedback",
+        action="store_true",
+        help="start the learning loop from empty (ignore feedback.jsonl)",
+    )
     args = parser.parse_args()
+
+    store = FeedbackStore() if args.reset_feedback else FeedbackStore.load(FEEDBACK_FILE)
 
     if args.proposer == "llm":
         proposer = (
-            LlmBackedProposer(model=args.model) if args.model else LlmBackedProposer()
+            LlmBackedProposer(model=args.model, store=store)
+            if args.model
+            else LlmBackedProposer(store=store)
         )
     else:
         proposer = RuleBasedProposer()
@@ -195,15 +228,22 @@ def main() -> None:
         active_cost_centers=mock.active_cost_centers(),
         min_confidence=args.min_confidence if args.min_confidence > 0 else None,
     )
+    learned = store.cost_center_for(document.vendor)
+    if learned:
+        print(f"Learned from past reviews: {document.vendor} posts to {learned}.")
+
     result = run_pattern1(
         client,
         proposer,
         doc_id,
         posting_date="2026-06-27",
         config=config,
-        approve=make_approver(args.approve, args.approver, args.rationale),
+        approve=make_approver(
+            args.approve, args.approver, args.rationale, args.correct_cost_center
+        ),
         cost_center=args.cost_center,
         approver=args.approver,
+        store=store,
     )
 
     print("\n" + "=" * 48)
@@ -223,6 +263,21 @@ def main() -> None:
         if entry.rationale:
             print(f"  {'':<22} reason: {entry.rationale}")
     print(f"\nAudit intact (hash chain verifies): {client.verify_audit()}")
+
+    # The learning loop: keep the decision, report the override rate, and raise a
+    # review if it has crossed the line. This is the whole point of persisting.
+    store.save(FEEDBACK_FILE)
+    overrides, total, rate = store.override_rate()
+    print(f"\nOverride rate: {overrides}/{total} = {rate:.0%} "
+          f"(threshold {args.override_threshold:.0%})")
+    digest = store.review_needed(threshold=args.override_threshold)
+    if digest is not None:
+        print(f"\n*** REVIEW NEEDED: override rate {digest.rate:.0%} is above "
+              f"{digest.threshold:.0%} over the last {digest.total} decisions. ***")
+        print("Recent overrides for a human to read (the signal, not the calendar):")
+        for item in digest.recent[-5:]:
+            why = item["reason"] or "(no reason given)"
+            print(f"  {item['doc_id']:<10} {item['vendor']:<22} {item['decision']}: {why}")
 
 
 if __name__ == "__main__":
