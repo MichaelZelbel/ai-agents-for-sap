@@ -11,6 +11,7 @@ dev = ["pytest>=8"]
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 pythonpath = [
+    ".",
     "shared",
     "patterns/pattern-01-finance-document-to-draft-posting/src",
     "patterns/pattern-02-invoice-triage/src",
@@ -23,4 +24,4 @@ pythonpath = [
     "patterns/pattern-09-sales-order/src",
     "patterns/pattern-10-expense-audit/src",
 ]
-testpaths = ["patterns"]
+testpaths = ["patterns", "discovery"]
