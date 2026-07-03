@@ -20,14 +20,39 @@ def test_learns_the_cost_center_a_human_moved_an_invoice_to():
     assert store.cost_center_for("Some Other Vendor") is None
 
 
-def test_notes_are_per_vendor_newest_first_and_capped():
+def test_examples_are_overrides_only_capped_and_prefer_the_same_vendor():
     store = FeedbackStore()
+    store.record(Decision("INV-A", "Vendor X", "approved"))  # not an override, excluded
     for i in range(5):
         store.record(Decision(f"INV-{i}", "Vendor X", "rejected", reason=f"reason {i}"))
     store.record(Decision("INV-Y", "Vendor Y", "rejected", reason="unrelated"))
-    notes = store.notes_for("Vendor X", limit=3)
-    assert notes == ["reason 4", "reason 3", "reason 2"]
-    assert "unrelated" not in notes
+    examples = store.examples_for("Vendor X", limit=3)
+    # Same vendor wins; the unrelated vendor is not in the top 3.
+    assert all(e.vendor == "Vendor X" for e in examples)
+    assert all(e.decision in ("corrected", "rejected") for e in examples)
+    assert "unrelated" not in [e.reason for e in examples]
+
+
+def test_examples_are_ranked_by_relevance_not_just_recency():
+    store = FeedbackStore()
+    # An OLD correction with a very close amount, and a NEW one with a far amount.
+    store.record(Decision("OLD", "Vendor X", "rejected", reason="close amount",
+                          gross="1000.00"))
+    store.record(Decision("NEW", "Vendor X", "rejected", reason="far amount",
+                          gross="9000.00"))
+    # A new invoice for ~1000: the older, amount-similar example should rank first,
+    # even though the far-amount one is more recent.
+    examples = store.examples_for("Vendor X", gross="1010.00", limit=2)
+    assert examples[0].reason == "close amount"
+
+
+def test_examples_are_deduplicated():
+    store = FeedbackStore()
+    for i in range(3):
+        store.record(Decision(f"INV-{i}", "Vendor X", "rejected",
+                              reason="same reason", proposed="same", correction=""))
+    examples = store.examples_for("Vendor X", limit=4)
+    assert len(examples) == 1  # three identical corrections collapse to one
 
 
 def test_override_rate_counts_corrected_and_rejected():
@@ -74,7 +99,7 @@ def test_persistence_round_trips(tmp_path):
     reloaded = FeedbackStore.load(path)
     assert len(reloaded) == 2
     assert reloaded.cost_center_for("Vendor X") == "CC-2000"
-    assert reloaded.notes_for("Vendor X") == ["why"]
+    assert [e.reason for e in reloaded.examples_for("Vendor X")] == ["why"]
 
 
 def test_load_missing_file_is_empty():

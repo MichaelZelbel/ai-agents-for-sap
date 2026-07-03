@@ -2,12 +2,14 @@
 
 Two jobs, both automatic, both on the safe side of the guard:
 
-1. Fold corrections back into the proposal. When a human moves an invoice to a
-   different cost center, or rejects it with a reason, we keep that, keyed by the
-   vendor. The next invoice from that vendor is proposed with the correction
-   already applied and the past reasons shown to the model. The deterministic
-   validator still checks every result, so a wrong "learned" value is caught
-   exactly like any other. The agent gets better without anyone editing code.
+1. Fold corrections back into the proposal. Every correction or rejection, on any
+   field, is kept as a worked example: the invoice, what the agent proposed, what
+   the human changed, and why. On a new invoice we retrieve the most RELEVANT of
+   those examples (same vendor and similar amount, not just the newest) and show
+   them to the model. One field, the cost center, we can also apply deterministically
+   so the loop works even offline with no model. The deterministic validator still
+   checks every result, so a wrong "learned" value is caught exactly like any other.
+   The agent gets better without anyone editing code.
 
 2. Watch the override rate. Every decision, approved-as-is, corrected, or
    rejected, is counted. When the share of drafts the humans had to touch climbs
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 # A "corrected" or "rejected" decision is an override: the human had to step in.
@@ -39,6 +42,11 @@ class Decision:
     decision: str  # "approved", "corrected", or "rejected"
     reason: str = ""  # the human's free-text note (why they changed or refused it)
     corrected_cost_center: str = ""  # set when the human moved the cost center
+    # The lines that make a correction a teachable example for any field:
+    invoice: str = ""  # what was on the invoice (net, tax, gross)
+    proposed: str = ""  # what the agent proposed (the whole posting)
+    correction: str = ""  # what the human changed, e.g. "cost center CC-1000 -> CC-2000"
+    gross: str = ""  # the invoice gross, kept apart so we can rank by amount similarity
 
 
 @dataclass(frozen=True)
@@ -66,22 +74,59 @@ class FeedbackStore:
 
     # --- fold corrections into the next proposal ---------------------------- #
 
+    def examples_for(
+        self, vendor: str, gross: object | None = None, limit: int = 4
+    ) -> list[Decision]:
+        """The most RELEVANT past human overrides to show the model as worked
+        examples of what a person changed, and why, whatever the field or reason.
+
+        In-context learning is sensitive to which examples you show, so we pick by
+        relevance, not recency: same vendor first (the strongest signal for an
+        invoice), then similar amount, newest as the tie-breaker. Near-duplicate
+        corrections are dropped, and the list is bounded, so the prompt stays small.
+        At scale you would do this with embedding similarity in a vector store; the
+        shape is identical, the scoring is just sharper."""
+        scored = []
+        for i, d in enumerate(self._decisions):
+            if d.decision in OVERRIDES:
+                scored.append((self._relevance(d, vendor, gross), i, d))
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        out: list[Decision] = []
+        seen: set = set()
+        for _score, _i, d in scored:
+            key = (d.proposed, d.correction, d.reason)
+            if key in seen:  # skip a near-identical correction we already have
+                continue
+            seen.add(key)
+            out.append(d)
+            if len(out) >= limit:
+                break
+        return out
+
+    @staticmethod
+    def _relevance(d: Decision, vendor: str, gross: object | None) -> float:
+        """Cheap, dependency-free relevance: vendor match dominates, amount adds a
+        little. A production system swaps this for embedding cosine similarity."""
+        score = 100.0 if d.vendor == vendor else 0.0
+        if gross is not None and d.gross:
+            try:
+                g = Decimal(str(gross))
+                if g != 0:
+                    rel = abs(Decimal(d.gross) - g) / abs(g)  # 0 = identical amount
+                    score += 5.0 * max(0.0, 1.0 - float(rel))
+            except (InvalidOperation, ArithmeticError):
+                pass
+        return score
+
     def cost_center_for(self, vendor: str) -> str | None:
-        """The cost center a human last moved this vendor's invoices to, if any.
-        The next invoice from this vendor is proposed with it already applied."""
+        """A shortcut for the one field the offline flow can set on its own: the
+        cost center a human last moved this vendor's invoices to. It is applied
+        deterministically (and re-checked by the guard), so the loop improves even
+        without a model. Everything else is learned through examples_for above."""
         for d in reversed(self._decisions):
             if d.vendor == vendor and d.corrected_cost_center:
                 return d.corrected_cost_center
         return None
-
-    def notes_for(self, vendor: str, limit: int = 3) -> list[str]:
-        """Recent human reasons for this vendor, newest first, to show the model."""
-        notes = [
-            d.reason
-            for d in reversed(self._decisions)
-            if d.vendor == vendor and d.reason
-        ]
-        return notes[:limit]
 
     # --- watch the override rate -------------------------------------------- #
 

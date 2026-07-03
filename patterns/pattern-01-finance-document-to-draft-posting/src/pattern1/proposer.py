@@ -83,15 +83,38 @@ class ProposerError(RuntimeError):
     """The model returned something we could not turn into a posting."""
 
 
-def build_prompt(
-    document: Document, posting_date: str, notes: list[str] | None = None
-) -> str:
+def _render_examples(examples) -> str:
+    """Turn past human overrides into worked examples for the prompt: what was on
+    the invoice, what the agent proposed, and what the human did about it. This is
+    how the loop reaches the model for any field, not just the cost center."""
+    if not examples:
+        return ""
+    blocks = []
+    for e in examples:
+        lines = [f"- Invoice: {e.invoice or '(no summary)'}"]
+        if e.proposed:
+            lines.append(f"  The agent proposed: {e.proposed}")
+        if e.decision == "corrected":
+            lines.append(f"  A human corrected it: {e.correction or e.reason}")
+        else:
+            lines.append("  A human rejected it, did not post.")
+        if e.reason:
+            lines.append(f"  Reason: {e.reason}")
+        blocks.append("\n".join(lines))
+    return (
+        "Past human corrections and rejections for this vendor. Learn from them and "
+        "do not repeat the same mistake:\n" + "\n".join(blocks) + "\n\n"
+    )
+
+
+def build_prompt(document: Document, posting_date: str, examples=None) -> str:
     """The instruction we hand the model. Plain, and it shows the chart of accounts.
 
-    `notes` are past human corrections for this vendor. Folding them in is the
-    learning loop for the model path: the agent sees what reviewers changed last
-    time and does not repeat it. The deterministic validator still checks the
-    result, so a note can only make the proposal better, never bypass a rule."""
+    `examples` are past human overrides for this vendor (corrections and rejections),
+    folded in as worked examples. This is the learning loop for the model path: the
+    agent sees what reviewers changed last time, on any field, and does not repeat
+    it. The deterministic validator still checks the result, so an example can only
+    make the proposal better, never bypass a rule."""
     if document.tax_lines:
         breakdown = "".join(
             f"  - rate {tl.rate}: net {tl.net}, tax {tl.tax}\n" for tl in document.tax_lines
@@ -110,13 +133,6 @@ def build_prompt(
             "the tax amount, and credit accounts payable for the gross amount. Debits "
             "must equal credits."
         )
-    notes_block = ""
-    if notes:
-        joined = "".join(f"  - {n}\n" for n in notes)
-        notes_block = (
-            "Notes from past human reviews of this vendor's invoices. Apply them "
-            "unless this invoice clearly differs:\n" + joined + "\n"
-        )
     return (
         "Propose the posting for this vendor invoice.\n\n"
         "Invoice:\n"
@@ -127,7 +143,7 @@ def build_prompt(
         f"- tax amount: {document.tax_amount}\n"
         f"- gross amount: {document.gross_amount}\n"
         f"{tax_block}\n"
-        f"{notes_block}"
+        f"{_render_examples(examples)}"
         "Chart of accounts you may use:\n"
         f"- {EXPENSE_ACCOUNT}: expense\n"
         f"- {INPUT_TAX_ACCOUNT}: input tax\n"
@@ -199,8 +215,12 @@ class LlmBackedProposer:
         self._store = store
 
     def propose(self, document: Document, *, posting_date: str) -> ProposedPosting:
-        notes = self._store.notes_for(document.vendor) if self._store else None
-        raw = self._complete(build_prompt(document, posting_date, notes=notes))
+        examples = (
+            self._store.examples_for(document.vendor, document.gross_amount)
+            if self._store
+            else None
+        )
+        raw = self._complete(build_prompt(document, posting_date, examples=examples))
         return parse_posting(raw, document=document, posting_date=posting_date)
 
     def _call_openrouter(self, prompt: str) -> str:

@@ -91,13 +91,14 @@ def run_pattern1(
 
     staged = client.stage_posting(posting)
 
+    proposed = posting  # what the agent proposed, remembered as the example's "before"
     decision = _as_decision(approve(document, posting, validation), approver)
     if not decision.approved:
         # A human said no. Keep the reason: it is what the learning loop reads.
         client.record_rejection(
             staged.staged_id, approver=decision.approver, rationale=decision.rationale
         )
-        _remember(store, document, doc_id, "rejected", decision)
+        _remember(store, document, doc_id, "rejected", decision, proposed, "")
         return FlowResult(
             outcome="rejected_by_human",
             validation=validation,
@@ -105,9 +106,11 @@ def run_pattern1(
         )
 
     kind = "approved"
+    correction = ""
     if decision.corrected_cost_center and decision.corrected_cost_center != posting.cost_center:
         # The human corrected the draft. Re-check it: even a human's edit must
         # pass the guard before it can be booked.
+        correction = f"cost center {posting.cost_center} -> {decision.corrected_cost_center}"
         corrected = apply_determination(
             document, posting, cost_center=decision.corrected_cost_center
         )
@@ -118,7 +121,7 @@ def run_pattern1(
                 approver=decision.approver,
                 rationale=f"correction refused by the guard: {recheck.reasons[0]}",
             )
-            _remember(store, document, doc_id, "rejected", decision)
+            _remember(store, document, doc_id, "rejected", decision, proposed, "")
             return FlowResult(
                 outcome="rejected_by_validator",
                 validation=recheck,
@@ -132,7 +135,7 @@ def run_pattern1(
         staged.staged_id, approver=decision.approver, rationale=decision.rationale
     )
     result = client.confirm_posting(staged.staged_id)
-    _remember(store, document, doc_id, kind, decision)
+    _remember(store, document, doc_id, kind, decision, proposed, correction)
     return FlowResult(
         outcome="posted",
         validation=validation,
@@ -141,14 +144,27 @@ def run_pattern1(
     )
 
 
+def _summarize_document(d: Document) -> str:
+    return f"net {d.net_amount}, tax {d.tax_amount}, gross {d.gross_amount} {d.currency}"
+
+
+def _summarize_posting(p: ProposedPosting) -> str:
+    lines = "; ".join(f"{ln.side} {ln.account} {ln.amount}" for ln in p.lines)
+    return f"{lines}; tax {p.tax_code}; cost center {p.cost_center}"
+
+
 def _remember(
     store: Optional[FeedbackStore],
     document: Document,
     doc_id: str,
     kind: str,
     decision: HumanDecision,
+    proposed: ProposedPosting,
+    correction: str,
 ) -> None:
-    """Record the decision so the loop can learn from it and watch the override rate."""
+    """Record the decision as a teachable example: the invoice, what the agent
+    proposed, and what the human did about it. That is what the loop learns from,
+    on any field, plus it feeds the override rate."""
     if store is None:
         return
     store.record(
@@ -160,5 +176,9 @@ def _remember(
             corrected_cost_center=(
                 decision.corrected_cost_center if kind == "corrected" else ""
             ),
+            invoice=_summarize_document(document),
+            proposed=_summarize_posting(proposed),
+            correction=correction,
+            gross=str(document.gross_amount),
         )
     )
