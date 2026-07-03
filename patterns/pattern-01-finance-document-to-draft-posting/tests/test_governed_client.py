@@ -85,6 +85,54 @@ def test_every_entry_carries_the_agents_identity():
     assert all(entry.actor == "invoice-agent@nordwind" for entry in client.audit_log)
 
 
+def test_approval_is_attributed_to_the_named_human():
+    # The agent stages; a named person approves. The auditor's question, "who
+    # approved this?", has a real answer, not the agent's principal.
+    client = governed()
+    staged = client.stage_posting(make_posting())
+    client.record_approval(
+        staged.staged_id, approver="a.schmidt@nordwind", rationale="checked the PO"
+    )
+    approve = next(e for e in client.audit_log if e.operation == "approve")
+    assert approve.actor == "a.schmidt@nordwind"
+    assert approve.rationale == "checked the PO"
+
+
+def test_rejection_keeps_the_reviewers_reason():
+    # A rejection posts nothing, but the reason is the learning signal, so it is
+    # kept on the tamper-evident record.
+    client = governed()
+    staged = client.stage_posting(make_posting())
+    client.record_rejection(
+        staged.staged_id,
+        approver="a.schmidt@nordwind",
+        rationale="cost center should be CC-2000, this is a campaign cost",
+    )
+    reject = client.audit_log[-1]
+    assert reject.operation == "reject"
+    assert reject.actor == "a.schmidt@nordwind"
+    assert "CC-2000" in reject.rationale
+    assert client.verify_audit() is True
+
+
+def test_tampering_with_a_rationale_is_detected():
+    import dataclasses
+
+    client = governed()
+    staged = client.stage_posting(make_posting())
+    client.record_approval(
+        staged.staged_id, approver="a.schmidt@nordwind", rationale="looks right"
+    )
+    # Rewrite why someone approved. The rationale is inside the hash, so it shows.
+    idx = next(
+        i for i, e in enumerate(client.audit_log) if e.operation == "approve"
+    )
+    client.audit_log[idx] = dataclasses.replace(
+        client.audit_log[idx], rationale="approved under duress"
+    )
+    assert client.verify_audit() is False
+
+
 def test_audit_chain_verifies_when_intact():
     client = governed()
     staged = client.stage_posting(make_posting())

@@ -10,7 +10,7 @@ only when the rules pass AND a human approves.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 from sap_client import Document, GovernedSapClient, PostingResult, ProposedPosting
 
@@ -18,8 +18,35 @@ from .determination import DEFAULT_COST_CENTER, apply_determination
 from .proposer import Proposer
 from .validator import ValidationResult, ValidatorConfig, validate_posting
 
-# Called to get a human decision. Returns True to approve, False to reject.
-Approve = Callable[[Document, ProposedPosting, ValidationResult], bool]
+# The default identity to attribute a decision to when a caller only says yes/no.
+DEFAULT_APPROVER = "a.schmidt@nordwind"
+
+
+@dataclass(frozen=True)
+class HumanDecision:
+    """What a person decided about a staged posting, and why.
+
+    The rationale is the point. When a reviewer rejects or corrects a draft, the
+    reason they type is the signal the learning loop reads to improve the agent.
+    That is why it lives on the record, not in someone's head.
+    """
+
+    approved: bool
+    approver: str = DEFAULT_APPROVER
+    rationale: str = ""
+
+
+# Called to get a human decision. May return a HumanDecision (who, and why), or a
+# bare bool (True to approve, False to reject) when the caller has nothing to add.
+Approve = Callable[
+    [Document, ProposedPosting, ValidationResult], Union[HumanDecision, bool]
+]
+
+
+def _as_decision(result: Union[HumanDecision, bool], approver: str) -> HumanDecision:
+    if isinstance(result, HumanDecision):
+        return result
+    return HumanDecision(approved=bool(result), approver=approver)
 
 
 @dataclass(frozen=True)
@@ -39,6 +66,7 @@ def run_pattern1(
     config: ValidatorConfig,
     approve: Approve,
     cost_center: str = DEFAULT_COST_CENTER,
+    approver: str = DEFAULT_APPROVER,
 ) -> FlowResult:
     document = client.read_document(doc_id)
     posting = proposer.propose(document, posting_date=posting_date)
@@ -52,14 +80,22 @@ def run_pattern1(
 
     staged = client.stage_posting(posting)
 
-    if not approve(document, posting, validation):
+    decision = _as_decision(approve(document, posting, validation), approver)
+    if not decision.approved:
+        # A human said no. Keep the reason: it is what the learning loop reads.
+        client.record_rejection(
+            staged.staged_id, approver=decision.approver, rationale=decision.rationale
+        )
         return FlowResult(
             outcome="rejected_by_human",
             validation=validation,
             staged_id=staged.staged_id,
         )
 
-    client.record_approval(staged.staged_id, approver="human")
+    # A named human approved, with an optional note. Both go on the record.
+    client.record_approval(
+        staged.staged_id, approver=decision.approver, rationale=decision.rationale
+    )
     result = client.confirm_posting(staged.staged_id)
     return FlowResult(
         outcome="posted",

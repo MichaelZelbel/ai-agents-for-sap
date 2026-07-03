@@ -8,6 +8,8 @@
     python run_agent.py --invoice-file my-invoice.json   # your own invoice (fields)
     python run_agent.py --invoice-file invoice.pdf       # your own invoice (PDF/image)
     python run_agent.py --proposer llm         # use a real model via OpenRouter
+    python run_agent.py --approver j.doe@nordwind        # who approves (on the record)
+    python run_agent.py --approve no --rationale "wrong cost center"   # reject with a reason
 
 You need no SAP account. Everything runs in memory. To read a PDF or image invoice,
 or to use --proposer llm, put your key in a file named .env next to this script:
@@ -37,7 +39,7 @@ from sap_client import (  # noqa: E402
     extract_document,
 )
 
-from pattern1.flow import run_pattern1  # noqa: E402
+from pattern1.flow import DEFAULT_APPROVER, HumanDecision, run_pattern1  # noqa: E402
 from pattern1.proposer import LlmBackedProposer, RuleBasedProposer  # noqa: E402
 from pattern1.validator import default_config  # noqa: E402
 
@@ -92,17 +94,25 @@ def show(document, posting, validation) -> None:
         print(f"  - {reason}")
 
 
-def make_approver(mode: str):
-    def approve(document, posting, validation) -> bool:
+def make_approver(mode: str, approver: str, rationale: str | None):
+    def approve(document, posting, validation) -> HumanDecision:
         show(document, posting, validation)
         if mode == "yes":
-            print("\nHuman decision: APPROVED (auto)")
-            return True
+            print(f"\nHuman decision: APPROVED (auto) by {approver}")
+            return HumanDecision(True, approver, rationale or "")
         if mode == "no":
-            print("\nHuman decision: REJECTED (auto)")
-            return False
+            reason = rationale or "auto-reject (scripted)"
+            print(f"\nHuman decision: REJECTED (auto) by {approver}")
+            return HumanDecision(False, approver, reason)
         answer = input("\nApprove this posting? [y/N] ").strip().lower()
-        return answer in {"y", "yes"}
+        approved = answer in {"y", "yes"}
+        prompt = (
+            "Any note for the record? (optional) "
+            if approved
+            else "Why? (a note for the learning loop) "
+        )
+        reason = rationale or input(prompt).strip()
+        return HumanDecision(approved, approver, reason)
 
     return approve
 
@@ -119,6 +129,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--approve", choices=["ask", "yes", "no"], default="ask", help="human decision"
+    )
+    parser.add_argument(
+        "--approver",
+        default=DEFAULT_APPROVER,
+        help="the named human who decides (goes on the audit record)",
+    )
+    parser.add_argument(
+        "--rationale",
+        default=None,
+        help="the reviewer's reason, recorded with their decision for the learning loop",
     )
     parser.add_argument(
         "--proposer",
@@ -181,8 +201,9 @@ def main() -> None:
         doc_id,
         posting_date="2026-06-27",
         config=config,
-        approve=make_approver(args.approve),
+        approve=make_approver(args.approve, args.approver, args.rationale),
         cost_center=args.cost_center,
+        approver=args.approver,
     )
 
     print("\n" + "=" * 48)
@@ -194,11 +215,13 @@ def main() -> None:
         for reason in result.validation.reasons:
             print(f"  - {reason}")
 
-    print("\nAudit trail (every call the agent made):")
+    print("\nAudit trail (who did what, and why):")
     for entry in client.audit_log:
         print(
-            f"  {entry.actor}  {entry.operation:<8} {entry.target:<12} {entry.outcome}"
+            f"  {entry.actor:<22} {entry.operation:<8} {entry.target:<12} {entry.outcome}"
         )
+        if entry.rationale:
+            print(f"  {'':<22} reason: {entry.rationale}")
     print(f"\nAudit intact (hash chain verifies): {client.verify_audit()}")
 
 

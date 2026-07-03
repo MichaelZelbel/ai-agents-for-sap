@@ -8,7 +8,7 @@ from sap_client import (
     ProposedPosting,
 )
 
-from pattern1.flow import run_pattern1
+from pattern1.flow import HumanDecision, run_pattern1
 from pattern1.proposer import RuleBasedProposer
 from pattern1.validator import default_config
 
@@ -122,6 +122,60 @@ def test_broken_seed_invoice_is_refused_by_the_guard():
     assert result.outcome == "rejected_by_validator"
     assert approve_calls == []
     assert any("does not balance" in r for r in result.validation.reasons)
+
+
+def test_posting_records_the_named_human_and_their_note():
+    # A HumanDecision carries who approved and why. Both land on the audit trail,
+    # attributed to the person, not the agent.
+    client = governed()
+
+    def approve_with_note(*_args):
+        return HumanDecision(
+            approved=True,
+            approver="a.schmidt@nordwind",
+            rationale="matched the PO, campaign spend",
+        )
+
+    result = run_pattern1(
+        client,
+        RuleBasedProposer(),
+        "INV-1001",
+        posting_date="2026-06-27",
+        config=default_config(),
+        approve=approve_with_note,
+    )
+    assert result.outcome == "posted"
+    approve = next(e for e in client.audit_log if e.operation == "approve")
+    assert approve.actor == "a.schmidt@nordwind"
+    assert "campaign spend" in approve.rationale
+    assert client.verify_audit() is True
+
+
+def test_rejection_reason_reaches_the_audit_trail():
+    # The learning loop needs the reviewer's reason. A rejection logs it.
+    client = governed()
+
+    def reject_with_reason(*_args):
+        return HumanDecision(
+            approved=False,
+            approver="a.schmidt@nordwind",
+            rationale="cost center wrong; this is marketing, not operations",
+        )
+
+    result = run_pattern1(
+        client,
+        RuleBasedProposer(),
+        "INV-1001",
+        posting_date="2026-06-27",
+        config=default_config(),
+        approve=reject_with_reason,
+    )
+    assert result.outcome == "rejected_by_human"
+    assert result.posting_result is None
+    reject = client.audit_log[-1]
+    assert reject.operation == "reject"
+    assert reject.actor == "a.schmidt@nordwind"
+    assert "marketing" in reject.rationale
 
 
 def test_your_own_registered_invoice_can_post():

@@ -4,7 +4,9 @@ It wraps any SapClient and adds four controls:
 
 1. Entitlements         -- the agent may only do operations it is allowed to do.
 2. Write-hold           -- a posting cannot be booked until a human has approved it.
-3. Propagated identity  -- every call is attributed to the agent's principal.
+3. Propagated identity  -- the agent's calls are attributed to its principal, and
+                           a human decision is attributed to the named person who
+                           made it, with their free-text reason on the record.
 4. Tamper-evident audit -- the log is hash-chained, so any later edit is detectable.
 
 In a real company this would be a shared platform service. Here it is a thin,
@@ -28,18 +30,27 @@ class AuditEntry:
     operation: str
     target: str
     outcome: str
-    actor: str
+    actor: str  # who performed this step: the agent's principal, or a named human
+    rationale: str  # the human's free-text reason, when a person decided. "" otherwise.
     entry_hash: str  # chains this entry to the one before it
 
 
 def _chain_hash(
-    prev_hash: str, operation: str, target: str, outcome: str, actor: str
+    prev_hash: str,
+    operation: str,
+    target: str,
+    outcome: str,
+    actor: str,
+    rationale: str,
 ) -> str:
     """The hash of one entry, mixed with the hash of the entry before it. Change any
-    past field and every hash after it stops matching."""
+    past field and every hash after it stops matching. The actor and the rationale
+    are inside the hash, so you cannot quietly rewrite who approved or why."""
     h = hashlib.sha256()
     h.update(prev_hash.encode("utf-8"))
-    h.update("\x1f".join([operation, target, outcome, actor]).encode("utf-8"))
+    h.update(
+        "\x1f".join([operation, target, outcome, actor, rationale]).encode("utf-8")
+    )
     return h.hexdigest()
 
 
@@ -73,10 +84,20 @@ class GovernedSapClient:
         self._log("stage", staged.staged_id, "ok")
         return staged
 
-    def record_approval(self, staged_id: str, approver: str) -> None:
-        """Record a human's approval of a staged posting."""
+    def record_approval(
+        self, staged_id: str, approver: str, rationale: str = ""
+    ) -> None:
+        """Record a named human's approval of a staged posting. The approve entry is
+        attributed to the human, not the agent, and carries their optional note."""
         self._approvals[staged_id] = approver
-        self._log("approve", staged_id, f"by:{approver}")
+        self._log("approve", staged_id, "ok", actor=approver, rationale=rationale)
+
+    def record_rejection(
+        self, target: str, approver: str, rationale: str = ""
+    ) -> None:
+        """Record a named human's rejection, with the reason they gave. Nothing is
+        posted, but the reason is kept: it is the signal the learning loop reads."""
+        self._log("reject", target, "not_approved", actor=approver, rationale=rationale)
 
     def confirm_posting(self, staged_id: str) -> PostingResult:
         self._require("confirm", staged_id)
@@ -92,7 +113,12 @@ class GovernedSapClient:
         prev = GENESIS
         for entry in self.audit_log:
             expected = _chain_hash(
-                prev, entry.operation, entry.target, entry.outcome, entry.actor
+                prev,
+                entry.operation,
+                entry.target,
+                entry.outcome,
+                entry.actor,
+                entry.rationale,
             )
             if expected != entry.entry_hash:
                 return False
@@ -104,15 +130,26 @@ class GovernedSapClient:
             self._log(operation, target, "blocked:not_entitled")
             raise NotEntitledError(operation)
 
-    def _log(self, operation: str, target: str, outcome: str) -> None:
+    def _log(
+        self,
+        operation: str,
+        target: str,
+        outcome: str,
+        *,
+        actor: str | None = None,
+        rationale: str = "",
+    ) -> None:
+        # Default actor is the agent's principal. A human decision passes its own.
+        actor = actor if actor is not None else self._actor
         prev = self.audit_log[-1].entry_hash if self.audit_log else GENESIS
-        entry_hash = _chain_hash(prev, operation, target, outcome, self._actor)
+        entry_hash = _chain_hash(prev, operation, target, outcome, actor, rationale)
         self.audit_log.append(
             AuditEntry(
                 operation=operation,
                 target=target,
                 outcome=outcome,
-                actor=self._actor,
+                actor=actor,
+                rationale=rationale,
                 entry_hash=entry_hash,
             )
         )
