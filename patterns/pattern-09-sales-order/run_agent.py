@@ -4,6 +4,13 @@
     python run_agent.py --request REQ-1 --approve     # release a clean order
     python run_agent.py --request REQ-2               # a flagged order (over policy)
     python run_agent.py --request REQ-3               # a flagged order (short stock)
+    python run_agent.py --request REQ-1 --reject --rationale "wrong SKU, not the usual"
+
+The learning loop: every decision (a release or a rejection reason) is remembered
+per customer in feedback.jsonl. The next request from that customer is extracted
+with the past rejections folded into the model's prompt, and the run prints the
+override rate. When that rate crosses --override-threshold, it prints a review so
+a human looks because the number moved.
 
 You need no SAP account and no API key. Everything runs in memory with the
 deterministic proposer. Pass --proposer llm to use a real model via OpenRouter.
@@ -15,12 +22,17 @@ import argparse
 import sys
 from pathlib import Path
 
-# Make this pattern importable when run directly.
+# Make this pattern and the shared learning layer importable when run directly.
 HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE / "src"))
+sys.path.insert(0, str(REPO / "shared"))
+
+from learning import CorrectionMemory  # noqa: E402
 
 from salesorder import (  # noqa: E402
     GovernedSalesClient,
+    HumanDecision,
     LlmBackedProposer,
     MockSalesClient,
     RuleBasedProposer,
@@ -28,6 +40,8 @@ from salesorder import (  # noqa: E402
     load_requests,
     run_pattern9,
 )
+
+FEEDBACK_FILE = HERE / "feedback.jsonl"
 
 
 def show(request, extracted, order, guard) -> None:
@@ -63,12 +77,33 @@ def main() -> None:
         help="sales manager approves the release (only reached if the guard passes)",
     )
     parser.add_argument(
+        "--reject",
+        action="store_true",
+        help="sales manager rejects the release; --rationale is the learning signal",
+    )
+    parser.add_argument(
+        "--rationale",
+        default=None,
+        help="the manager's reason, recorded with their decision for the learning loop",
+    )
+    parser.add_argument(
         "--proposer",
         choices=["rule", "llm"],
         default="rule",
         help="rule = offline deterministic; llm = a real model via OpenRouter",
     )
     parser.add_argument("--model", default=None, help="override the OpenRouter model")
+    parser.add_argument(
+        "--override-threshold",
+        type=float,
+        default=0.2,
+        help="raise a review when the override rate climbs above this (0..1)",
+    )
+    parser.add_argument(
+        "--reset-feedback",
+        action="store_true",
+        help="start the learning loop from empty (ignore feedback.jsonl)",
+    )
     args = parser.parse_args()
 
     requests = load_requests()
@@ -77,9 +112,17 @@ def main() -> None:
         known = ", ".join(sorted(requests))
         parser.error(f"unknown request {args.request!r}. Known ids: {known}")
 
+    store = (
+        CorrectionMemory()
+        if args.reset_feedback
+        else CorrectionMemory.load(FEEDBACK_FILE)
+    )
+
     if args.proposer == "llm":
         proposer = (
-            LlmBackedProposer(model=args.model) if args.model else LlmBackedProposer()
+            LlmBackedProposer(model=args.model, store=store)
+            if args.model
+            else LlmBackedProposer(store=store)
         )
     else:
         proposer = RuleBasedProposer()
@@ -88,14 +131,18 @@ def main() -> None:
         MockSalesClient(), entitlements={"stage", "release"}
     )
 
-    def approve(_request, order, guard) -> bool:
+    def approve(_request, order, guard) -> HumanDecision:
         # The guard passed, so we reach the human. Show the draft, then decide.
         show(_request, result_extracted["value"], order, guard)
+        if args.reject:
+            reason = args.rationale or "rejected (scripted)"
+            print(f"\nSales manager decision: REJECTED ({reason})")
+            return HumanDecision(approved=False, rationale=reason)
         if args.approve:
             print("\nSales manager decision: APPROVED")
-            return True
+            return HumanDecision(approved=True, rationale=args.rationale or "")
         print("\nSales manager decision: not approved (pass --approve to release)")
-        return False
+        return HumanDecision(approved=False, rationale=args.rationale or "")
 
     # Extract once here so the printout shows the same extraction the flow uses.
     result_extracted = {"value": proposer.extract(request, catalog=client.catalog)}
@@ -106,6 +153,7 @@ def main() -> None:
         request,
         config=default_config(),
         approve=approve,
+        store=store,
     )
 
     # If the guard flagged it, approve() was never called, so print here.
@@ -127,6 +175,27 @@ def main() -> None:
             f"  {entry.actor}  {entry.operation:<8} {entry.target:<14} {entry.outcome}"
         )
     print(f"\nAudit intact (hash chain verifies): {client.verify_audit()}")
+
+    # The learning loop: keep the decision, report the override rate, and raise a
+    # review if it has crossed the line. This is the whole point of persisting.
+    store.save(FEEDBACK_FILE)
+    overrides, total, rate = store.override_rate()
+    print(
+        f"\nOverride rate: {overrides}/{total} = {rate:.0%} "
+        f"(threshold {args.override_threshold:.0%})"
+    )
+    digest = store.review_needed(threshold=args.override_threshold)
+    if digest is not None:
+        print(
+            f"\n*** REVIEW NEEDED: override rate {digest.rate:.0%} is above "
+            f"{digest.threshold:.0%} over the last {digest.total} decisions. ***"
+        )
+        print("Recent overrides for a human to read (the signal, not the calendar):")
+        for item in digest.recent[-5:]:
+            why = item["reason"] or "(no reason given)"
+            print(
+                f"  {item['item_id']:<10} {item['entity']:<10} {item['decision']}: {why}"
+            )
 
 
 if __name__ == "__main__":

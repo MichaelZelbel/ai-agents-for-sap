@@ -21,7 +21,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
@@ -32,6 +32,12 @@ class Line:
     description: str
     quantity: Decimal
     unit_price: Decimal
+
+
+def invoice_total(invoice: list["Line"]) -> Decimal:
+    """The invoice total: quantity times price, summed. Used as the learning loop's
+    `amount`, so past corrections can be ranked by how close in size they are."""
+    return sum((ln.quantity * ln.unit_price for ln in invoice), Decimal("0"))
 
 
 @dataclass(frozen=True)
@@ -45,9 +51,11 @@ class MatcherError(RuntimeError):
 
 
 class LineMatcher(Protocol):
-    def match(self, invoice: list[Line], po: list[Line]) -> list[int]:
+    def match(
+        self, invoice: list[Line], po: list[Line], *, vendor: str | None = None
+    ) -> list[int]:
         """For each invoice line, the index of the purchase-order line it matches,
-        or -1 if none."""
+        or -1 if none. `vendor` keys the learning loop when a store is set."""
         ...
 
 
@@ -90,7 +98,39 @@ def three_way_match(
     return MatchResult("PASS" if not reasons else "FAIL", reasons)
 
 
-def build_prompt(invoice: list[Line], po: list[Line]) -> str:
+def _render_examples(examples) -> str:
+    """Turn past human decisions into worked examples for the prompt: what the
+    documents showed, how the agent matched the lines, and what the reviewer did.
+    This is how the loop reaches the model, so it does not repeat a bad match a
+    human already caught and held."""
+    if not examples:
+        return ""
+    blocks = []
+    for e in examples:
+        lines = [f"- Documents: {e.context or '(no summary)'}"]
+        if e.proposed:
+            lines.append(f"  The agent matched lines as: {e.proposed}")
+        if e.decision == "corrected":
+            lines.append(f"  A human corrected it: {e.correction or e.reason}")
+        else:
+            lines.append("  A human held the invoice, did not release it.")
+        if e.reason:
+            lines.append(f"  Reason: {e.reason}")
+        blocks.append("\n".join(lines))
+    return (
+        "Past human corrections and rejections for this vendor. Learn from them and "
+        "do not repeat the same mistake:\n" + "\n".join(blocks) + "\n\n"
+    )
+
+
+def build_prompt(invoice: list[Line], po: list[Line], examples=None) -> str:
+    """The instruction we hand the model.
+
+    `examples` are past human decisions for this vendor (holds and corrections),
+    folded in as worked examples. This is the learning loop for the model path: the
+    matcher sees what reviewers held last time and does not repeat the mistake. The
+    arithmetic guard still checks the result, so an example can only make the match
+    better, never bypass a number."""
     inv = "\n".join(f"  {i}: {ln.description}" for i, ln in enumerate(invoice))
     ordered = "\n".join(f"  {j}: {ln.description}" for j, ln in enumerate(po))
     return (
@@ -98,6 +138,7 @@ def build_prompt(invoice: list[Line], po: list[Line]) -> str:
         "The wording differs; match on meaning.\n\n"
         f"Invoice lines:\n{inv}\n\n"
         f"Purchase-order lines:\n{ordered}\n\n"
+        f"{_render_examples(examples)}"
         "Reply with ONLY JSON of this shape, where mapping[i] is the purchase-order "
         "index for invoice line i, or -1 if there is no match:\n"
         '{"mapping": [0, 1]}'
@@ -128,13 +169,28 @@ class LlmLineMatcher:
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
         complete: Callable[[str], str] | None = None,
+        store: Any | None = None,
+        vendor: str | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         self._complete = complete or self._call_openrouter
+        # Optional CorrectionMemory. When set, past decisions for the vendor are
+        # folded into the prompt so the model learns from them. `vendor` is the
+        # default key; a per-call vendor (below) overrides it.
+        self._store = store
+        self._vendor = vendor
 
-    def match(self, invoice: list[Line], po: list[Line]) -> list[int]:
-        raw = self._complete(build_prompt(invoice, po))
+    def match(
+        self, invoice: list[Line], po: list[Line], *, vendor: str | None = None
+    ) -> list[int]:
+        key = vendor or self._vendor
+        examples = (
+            self._store.examples_for(key, invoice_total(invoice))
+            if self._store and key
+            else None
+        )
+        raw = self._complete(build_prompt(invoice, po, examples=examples))
         return parse_mapping(raw, invoice_len=len(invoice))
 
     def _call_openrouter(self, prompt: str) -> str:

@@ -13,15 +13,40 @@ Every step is logged so you can see exactly what the agent did and why.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
+
+from learning import Correction, CorrectionMemory
 
 from .guard import GuardConfig, GuardVerdict, check_match
 from .ledger import ClearingError, ClearingResult, MockArLedger
 from .models import Payment, ProposedMatch
 from .proposer import Matcher
 
-# Called to get a human decision. Returns True to approve, False to reject.
-Approve = Callable[[Payment, ProposedMatch, GuardVerdict], bool]
+
+@dataclass(frozen=True)
+class HumanDecision:
+    """What a person decided about a proposed clearing, and why.
+
+    The rationale is the point. When a reviewer rejects a proposed match, the
+    reason they type is the signal the learning loop reads to improve the agent
+    for this customer. That is why it lives on the record, not in someone's head.
+    """
+
+    approved: bool
+    rationale: str = ""
+
+
+# Called to get a human decision. May return a HumanDecision (approve/reject, and
+# why) or a bare bool (True to approve, False to reject) when there is nothing to add.
+Approve = Callable[
+    [Payment, ProposedMatch, GuardVerdict], Union["HumanDecision", bool]
+]
+
+
+def _as_decision(result: Union[HumanDecision, bool]) -> HumanDecision:
+    if isinstance(result, HumanDecision):
+        return result
+    return HumanDecision(approved=bool(result))
 
 # Called with an exception so it can be routed to a person. Payment id and a
 # short reason. Returns nothing. Here it just records; in a real system it
@@ -71,6 +96,7 @@ def run_cash_application(
     config: GuardConfig,
     approve: Approve,
     route_exception: Optional[RouteException] = None,
+    store: Optional[CorrectionMemory] = None,
 ) -> FlowResult:
     log = CashAppLog()
     router = route_exception or _default_router(log)
@@ -98,8 +124,12 @@ def run_cash_application(
             log=log,
         )
 
-    if not approve(payment, proposal, verdict):
+    decision = _as_decision(approve(payment, proposal, verdict))
+    if not decision.approved:
+        # A human said no. Keep the reason: it is what the learning loop reads,
+        # per customer, so the agent proposes better next time.
         log.add("approve", "human declined -- nothing cleared")
+        _remember(store, payment, proposal, "rejected", decision)
         return FlowResult(
             outcome="rejected_by_human",
             verdict=verdict,
@@ -107,7 +137,10 @@ def run_cash_application(
             log=log,
         )
 
+    # A human approved this clearing. Record the decision either way, so the
+    # override rate counts approvals as well as rejections.
     log.add("approve", "human approved")
+    _remember(store, payment, proposal, "approved", decision)
     try:
         clearing = ledger.clear(payment.payment_id, proposal.invoice_ids)
     except ClearingError as exc:
@@ -128,4 +161,45 @@ def run_cash_application(
         proposal=proposal,
         clearing=clearing,
         log=log,
+    )
+
+
+def _summarize_payment(payment: Payment) -> str:
+    remit = (
+        ", ".join(f"{line.reference} {line.amount}" for line in payment.remittance)
+        or "no remittance"
+    )
+    return f"{payment.amount} {payment.currency}; remittance: {remit}"
+
+
+def _summarize_proposal(proposal: ProposedMatch) -> str:
+    ids = ", ".join(proposal.invoice_ids) or "none"
+    note = f" -- {proposal.note}" if proposal.note else ""
+    return f"invoices {ids}{note}"
+
+
+def _remember(
+    store: Optional[CorrectionMemory],
+    payment: Payment,
+    proposal: ProposedMatch,
+    decision: str,
+    human: HumanDecision,
+) -> None:
+    """Record the human decision as a teachable example, keyed by the customer:
+    what the payment looked like, which invoices the agent proposed to clear, and
+    what the human did about it. That is what the loop learns from, plus it feeds
+    the override rate."""
+    if store is None:
+        return
+    store.record(
+        Correction(
+            entity=payment.customer,
+            item_id=payment.payment_id,
+            decision=decision,
+            reason=human.rationale,
+            context=_summarize_payment(payment),
+            proposed=_summarize_proposal(proposal),
+            correction="",
+            amount=str(payment.amount),
+        )
     )

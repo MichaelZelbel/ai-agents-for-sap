@@ -41,7 +41,7 @@ from .proposer import (
 from .guard import GuardConfig, GuardResult, default_config, guard_order
 from .governed_client import AuditEntry, GovernedSalesClient
 from .mock_client import MockSalesClient
-from .flow import FlowResult, run_pattern9
+from .flow import DEFAULT_APPROVER, FlowResult, HumanDecision, run_pattern9
 
 __all__ = [
     "Customer",
@@ -72,5 +72,7 @@ __all__ = [
     "AuditEntry",
     "MockSalesClient",
     "FlowResult",
+    "HumanDecision",
+    "DEFAULT_APPROVER",
     "run_pattern9",
 ]

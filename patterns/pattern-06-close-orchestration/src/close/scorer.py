@@ -131,8 +131,51 @@ class ScorerError(RuntimeError):
     """The model returned something we could not turn into scores."""
 
 
-def build_prompt(plan: ClosePlan) -> str:
-    """The instruction we hand the model. Plain, and it lists every task."""
+def _render_examples(examples) -> str:
+    """Fold past human decisions for these tasks' owners into the prompt as worked
+    examples: what the agent proposed for a task, whether the human applied or
+    dismissed the intervention, and why.
+
+    Research caveat, and it is the whole reason this pattern learns cautiously:
+    PREDICTION memory transfers poorly. A dismissal on one task, one owner, one
+    period is weak evidence about a different task in a different period, far weaker
+    than a corrected cost center is for the next invoice from the same vendor. Close
+    dynamics shift month to month. So these examples go in as gentle priors only,
+    capped and de-duplicated, and the deterministic guard plus the human keep the
+    final say. At most the model nudges a score it would otherwise inflate; it can
+    never apply anything on its own.
+    """
+    if not examples:
+        return ""
+    blocks = []
+    for e in examples:
+        lines = [f"- Owner {e.entity}, task {e.item_id}."]
+        if e.proposed:
+            lines.append(f"  The agent proposed: {e.proposed}")
+        if e.decision == "rejected":
+            lines.append("  A human dismissed the intervention.")
+        elif e.decision == "corrected":
+            lines.append(f"  A human changed it: {e.correction or e.reason}")
+        else:
+            lines.append("  A human applied the intervention.")
+        if e.reason:
+            lines.append(f"  Reason: {e.reason}")
+        blocks.append("\n".join(lines))
+    return (
+        "Past human corrections and dismissals for this owner's tasks. Learn from "
+        "them (treat as weak priors, not rules; the risk shifts each period):\n"
+        + "\n".join(blocks)
+        + "\n\n"
+    )
+
+
+def build_prompt(plan: ClosePlan, examples=None) -> str:
+    """The instruction we hand the model. Plain, and it lists every task.
+
+    `examples` are past human dismissals and corrections for the tasks' owners,
+    folded in so the model sees what reviewers changed before. Prediction memory
+    transfers poorly (see _render_examples), so these are weak priors; the guard
+    and the human still decide."""
     lines = [
         "Score each close task from 0.00 to 1.00 for how likely it is to block "
         "the critical path. Higher means more likely to block.\n",
@@ -152,6 +195,9 @@ def build_prompt(plan: ClosePlan) -> str:
             f"status={task.status} deadline={task.deadline} "
             f"depends_on={deps} signals={signal_text}"
         )
+    examples_block = _render_examples(examples)
+    if examples_block:
+        lines.append("\n" + examples_block.rstrip())
     lines.append(
         '\nReply with ONLY a JSON object of this shape, no prose:\n'
         '{"scores": [{"task_id": "T-02", "score": "0.85"}]}'
@@ -213,14 +259,35 @@ class LlmBackedScorer:
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
         complete: Callable[[str], str] | None = None,
+        store: Any | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         self._complete = complete or self._call_openrouter
+        # Optional CorrectionMemory. When set, past dismissals and corrections for
+        # each task's owner are folded into the prompt as weak priors.
+        self._store = store
 
     def score(self, plan: ClosePlan) -> list[BlockerPrediction]:
-        raw = self._complete(build_prompt(plan))
+        examples = self._gather_examples(plan) if self._store else None
+        raw = self._complete(build_prompt(plan, examples=examples))
         return parse_scores(raw, plan=plan)
+
+    def _gather_examples(self, plan: ClosePlan) -> list:
+        """Collect the most relevant past overrides for the plan's owners. Prediction
+        memory transfers poorly, so we keep it deliberately small: a couple per owner,
+        de-duplicated. These are priors for the model; the guard and human still
+        decide, and nothing here can move the plan."""
+        seen: set = set()
+        out: list = []
+        for task in plan.tasks:
+            for c in self._store.examples_for(task.owner, task.impact, limit=2):
+                key = (c.entity, c.proposed, c.correction, c.reason)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(c)
+        return out
 
     def _call_openrouter(self, prompt: str) -> str:
         if not self._api_key:

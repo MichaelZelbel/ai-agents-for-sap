@@ -118,8 +118,42 @@ _SYSTEM = (
 )
 
 
-def build_prompt(payment: Payment, open_invoices: Sequence[Invoice]) -> str:
-    """The instruction handed to the model. Plain, and it lists the open items."""
+def _render_examples(examples) -> str:
+    """Turn past human decisions for this customer into worked examples for the
+    prompt: what the payment looked like, what the agent proposed, and what the
+    human did about it. Customers reference invoices in idiosyncratic ways on
+    their remittance, so per-customer examples are how the loop reaches the model."""
+    if not examples:
+        return ""
+    blocks = []
+    for e in examples:
+        lines = [f"- Payment: {e.context or '(no summary)'}"]
+        if e.proposed:
+            lines.append(f"  The agent proposed to clear: {e.proposed}")
+        if e.decision == "corrected":
+            lines.append(f"  A human corrected it: {e.correction or e.reason}")
+        else:
+            lines.append("  A human rejected it, did not clear.")
+        if e.reason:
+            lines.append(f"  Reason: {e.reason}")
+        blocks.append("\n".join(lines))
+    return (
+        "Past human corrections and rejections for this customer. Learn from them:\n"
+        + "\n".join(blocks)
+        + "\n\n"
+    )
+
+
+def build_prompt(
+    payment: Payment, open_invoices: Sequence[Invoice], examples=None
+) -> str:
+    """The instruction handed to the model. Plain, and it lists the open items.
+
+    `examples` are past human decisions for this customer (rejections, and any
+    corrections), folded in as worked examples. This is the learning loop for the
+    model path: the agent sees how a reviewer read this customer's payments last
+    time and does not repeat a mistake. The deterministic guard still checks the
+    result, so an example can only make the proposal better, never bypass a rule."""
     remittance_lines = (
         "\n".join(
             f"  - reference {line.reference}: {line.amount}"
@@ -144,6 +178,7 @@ def build_prompt(payment: Payment, open_invoices: Sequence[Invoice]) -> str:
         f"{remittance_lines}\n\n"
         "Open invoices for this customer:\n"
         f"{invoice_lines}\n\n"
+        f"{_render_examples(examples)}"
         "A credit note is a negative amount. It nets down the matched total.\n"
         "Pick the set of invoice ids whose amounts sum to the payment amount.\n\n"
         "Reply with ONLY a JSON object of this shape, no prose:\n"
@@ -194,15 +229,26 @@ class LlmBackedMatcher:
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
         complete: Callable[[str], str] | None = None,
+        store: Any | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         self._complete = complete or self._call_openrouter
+        # Optional CorrectionMemory. When set, past decisions for this customer
+        # are folded into the prompt so the model learns from them.
+        self._store = store
 
     def propose(
         self, payment: Payment, open_invoices: Sequence[Invoice]
     ) -> ProposedMatch:
-        raw = self._complete(build_prompt(payment, open_invoices))
+        examples = (
+            self._store.examples_for(payment.customer, payment.amount)
+            if self._store
+            else None
+        )
+        raw = self._complete(
+            build_prompt(payment, open_invoices, examples=examples)
+        )
         return parse_match(raw, payment=payment)
 
     def _call_openrouter(self, prompt: str) -> str:

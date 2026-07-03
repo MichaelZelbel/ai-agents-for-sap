@@ -20,7 +20,7 @@ from .proposer import (
     RuleBasedMatcher,
     parse_match,
 )
-from .flow import FlowResult, run_cash_application
+from .flow import FlowResult, HumanDecision, run_cash_application
 
 __all__ = [
     "Invoice",
@@ -39,5 +39,6 @@ __all__ = [
     "MatcherError",
     "parse_match",
     "FlowResult",
+    "HumanDecision",
     "run_cash_application",
 ]

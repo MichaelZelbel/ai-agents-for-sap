@@ -20,12 +20,17 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Optional, Protocol, Union
+
+from learning import Correction, CorrectionMemory
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
 
 CATEGORIES = ("duplicate", "short_payment", "price", "not_received", "other")
+
+# The default identity to attribute a decision to when a caller only says send/discard.
+DEFAULT_REVIEWER = "a.schmidt@nordwind"
 
 
 @dataclass(frozen=True)
@@ -60,12 +65,46 @@ class DisputeAssistant(Protocol):
         ...
 
 
-def build_prompt(dispute: Dispute) -> str:
+def _render_examples(examples) -> str:
+    """Turn past human decisions for this vendor into worked examples for the prompt:
+    what the dispute said, what category the agent chose, and what the human did about
+    the draft. This is how the loop reaches the model: it sees what reviewers discarded
+    (and why) last time and does not repeat the same misread. The guard still checks the
+    result, so an example can only make the draft better, never bypass a rule."""
+    if not examples:
+        return ""
+    blocks = []
+    for e in examples:
+        lines = [f"- Dispute: {e.context or '(no summary)'}"]
+        if e.proposed:
+            lines.append(f"  The agent classified it as: {e.proposed}")
+        if e.decision == "corrected":
+            lines.append(f"  A human corrected it: {e.correction or e.reason}")
+        else:
+            lines.append("  A human rejected the draft, did not send it.")
+        if e.reason:
+            lines.append(f"  Reason: {e.reason}")
+        blocks.append("\n".join(lines))
+    return (
+        "Past human corrections and rejections for this vendor. Learn from them:\n"
+        + "\n".join(blocks)
+        + "\n\n"
+    )
+
+
+def build_prompt(dispute: Dispute, examples=None) -> str:
+    """The instruction we hand the model.
+
+    `examples` are past human decisions for this vendor (rejections and their reasons),
+    folded in as worked examples. This is the learning loop for the model path: the
+    agent sees what reviewers discarded last time and does not repeat it. The guard
+    (review) still checks the result, so an example can only make the draft better."""
     return (
         "A vendor has raised a dispute about a payment. Read it, classify it, and "
         "draft a short, polite reply for a human to review.\n\n"
         f"Vendor: {dispute.vendor}\n"
         f"Message: {dispute.message}\n\n"
+        f"{_render_examples(examples)}"
         "Category must be exactly one of: " + ", ".join(CATEGORIES) + ".\n"
         "Reply with ONLY JSON of this shape:\n"
         '{"category": "short_payment", "reply": "Dear ..., thank you for ..."}'
@@ -93,6 +132,97 @@ def review(assessment: Assessment) -> Recommendation:
     return Recommendation(category=assessment.category, reply=assessment.reply)
 
 
+# --- the flow: assess -> review (guard) -> human decides -> remember ---------- #
+
+
+@dataclass(frozen=True)
+class HumanDecision:
+    """What a person decided about a drafted reply, and why.
+
+    This pattern is suggest-only, so the human decision is not approve-then-post but
+    send-the-draft or discard-it. `sent=True` means the reviewer marked the draft sent
+    (an approval of the agent's read); `sent=False` means they discarded it (a rejection).
+    A discard's reason is the learning signal: it is what the loop reads to improve the
+    next classification for this vendor. The agent itself still takes no action."""
+
+    sent: bool
+    reviewer: str = DEFAULT_REVIEWER
+    reason: str = ""
+
+
+# Called to get a human decision. May return a HumanDecision (who, and why), or a bare
+# bool (True to send the draft, False to discard it) when the caller has nothing to add.
+Decide = Callable[[Dispute, Recommendation], Union["HumanDecision", bool]]
+
+
+def _as_decision(result: Union[HumanDecision, bool], reviewer: str) -> HumanDecision:
+    if isinstance(result, HumanDecision):
+        return result
+    return HumanDecision(sent=bool(result), reviewer=reviewer)
+
+
+@dataclass(frozen=True)
+class DisputeResult:
+    outcome: str  # "sent" or "discarded" (what the human did with the draft)
+    recommendation: Recommendation
+
+
+def _summarize_dispute(d: Dispute) -> str:
+    msg = d.message.strip().replace("\n", " ")
+    if len(msg) > 160:
+        msg = msg[:157] + "..."
+    return f"from {d.vendor}: {msg}"
+
+
+def _remember(
+    store: Optional[CorrectionMemory],
+    dispute: Dispute,
+    recommendation: Recommendation,
+    kind: str,
+    decision: HumanDecision,
+) -> None:
+    """Record the human decision as a teachable example: what the dispute said, what
+    category the agent chose, and what the human did with the draft. A discard's reason
+    is the signal the loop learns from, and every decision feeds the override rate."""
+    if store is None:
+        return
+    store.record(
+        Correction(
+            entity=dispute.vendor,
+            item_id=dispute.dispute_id,
+            decision=kind,
+            reason=decision.reason,
+            context=_summarize_dispute(dispute),
+            proposed=recommendation.category,
+            correction="",
+            amount="",
+        )
+    )
+
+
+def run_dispute(
+    assistant: "DisputeAssistant",
+    dispute: Dispute,
+    *,
+    decide: Decide,
+    reviewer: str = DEFAULT_REVIEWER,
+    store: Optional[CorrectionMemory] = None,
+) -> DisputeResult:
+    """Tie the suggest-only flow together: the agent classifies and drafts, the guard
+    checks, a human marks the draft sent or discards it, and the move is remembered.
+
+    The agent still takes no action. `run_dispute` records the human's decision for the
+    learning loop; sending the reply, if it happens, is the human's doing, not the agent's."""
+    recommendation = review(assistant.assess(dispute))
+    decision = _as_decision(decide(dispute, recommendation), reviewer)
+    kind = "approved" if decision.sent else "rejected"
+    _remember(store, dispute, recommendation, kind, decision)
+    return DisputeResult(
+        outcome="sent" if decision.sent else "discarded",
+        recommendation=recommendation,
+    )
+
+
 class LlmDisputeAssistant:
     """Reads a dispute and proposes a category and a draft reply. Inject `complete`
     to test; by default it calls OpenRouter using OPENROUTER_API_KEY."""
@@ -103,13 +233,18 @@ class LlmDisputeAssistant:
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
         complete: Callable[[str], str] | None = None,
+        store: Optional[CorrectionMemory] = None,
     ) -> None:
         self._model = model
         self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         self._complete = complete or self._call_openrouter
+        # Optional CorrectionMemory. When set, past decisions for the vendor are
+        # folded into the prompt so the model learns from them.
+        self._store = store
 
     def assess(self, dispute: Dispute) -> Assessment:
-        return parse_assessment(self._complete(build_prompt(dispute)))
+        examples = self._store.examples_for(dispute.vendor) if self._store else None
+        return parse_assessment(self._complete(build_prompt(dispute, examples=examples)))
 
     def _call_openrouter(self, prompt: str) -> str:
         if not self._api_key:

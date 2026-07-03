@@ -1,25 +1,33 @@
 from .dispute import (
     CATEGORIES,
+    DEFAULT_REVIEWER,
     Assessment,
     Dispute,
     DisputeAssistant,
     DisputeError,
+    DisputeResult,
+    HumanDecision,
     LlmDisputeAssistant,
     Recommendation,
     build_prompt,
     parse_assessment,
     review,
+    run_dispute,
 )
 
 __all__ = [
     "CATEGORIES",
+    "DEFAULT_REVIEWER",
     "Assessment",
     "Dispute",
     "DisputeAssistant",
     "DisputeError",
+    "DisputeResult",
+    "HumanDecision",
     "LlmDisputeAssistant",
     "Recommendation",
     "build_prompt",
     "parse_assessment",
     "review",
+    "run_dispute",
 ]

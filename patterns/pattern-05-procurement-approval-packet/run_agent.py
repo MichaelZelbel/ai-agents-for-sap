@@ -22,6 +22,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE / "src"))
 sys.path.insert(0, str(REPO / "shared"))
 
+from learning import Correction, CorrectionMemory  # noqa: E402
 from procurement import (  # noqa: E402
     LlmBackedNarrator,
     PacketAuditLog,
@@ -29,6 +30,8 @@ from procurement import (  # noqa: E402
     assemble_packet,
     record_decision,
 )
+
+FEEDBACK_FILE = HERE / "feedback.jsonl"
 
 
 def show(packet) -> None:
@@ -68,7 +71,26 @@ def main() -> None:
         help="record an approval decision for the staged packet",
     )
     parser.add_argument(
+        "--reject",
+        action="store_true",
+        help="record a rejection decision for the staged packet",
+    )
+    parser.add_argument(
         "--approver", default="manager", help="who records the decision"
+    )
+    parser.add_argument(
+        "--rationale", default="", help="the reviewer's reason, for the override rate"
+    )
+    parser.add_argument(
+        "--override-threshold",
+        type=float,
+        default=0.2,
+        help="raise a review when the override rate climbs above this (0..1)",
+    )
+    parser.add_argument(
+        "--reset-feedback",
+        action="store_true",
+        help="start the override-rate history from empty",
     )
     parser.add_argument(
         "--narrator",
@@ -90,19 +112,29 @@ def main() -> None:
     result = assemble_packet(args.request, narrator, log=log)
     show(result.packet)
 
-    if args.approve:
+    store = CorrectionMemory() if args.reset_feedback else CorrectionMemory.load(FEEDBACK_FILE)
+    req, sup = result.packet.requisition, result.packet.supplier
+    ctx = f"{req.category} {req.amount} {req.currency}"
+
+    if args.approve or args.reject:
+        approved = args.approve and not args.reject
         outcome = record_decision(
-            result.packet, approver=args.approver, approved=True, log=log
+            result.packet, approver=args.approver, approved=approved, log=log
         )
         print("\n" + "=" * 52)
-        if outcome == "approved":
-            print(f"Human decision: APPROVED by {args.approver}")
+        if outcome in ("approved", "rejected"):
+            print(f"Human decision: {outcome.upper()} by {args.approver}")
+            store.record(Correction(
+                entity=sup.name, item_id=result.packet.request_id, decision=outcome,
+                reason=args.rationale, context=ctx,
+                proposed=result.packet.recommendation, amount=str(req.amount),
+            ))
         elif outcome == "refused_blocked":
             print("Approval REFUSED: packet is blocked on a missing document.")
             print("Supply the required document, then re-run.")
     else:
         print("\n" + "=" * 52)
-        print("Packet staged. A human approver decides. Re-run with --approve to sign off.")
+        print("Packet staged. A human approver decides. Re-run with --approve or --reject.")
 
     print("\nAudit trail (every action the agent took):")
     for entry in log.entries:
@@ -110,6 +142,23 @@ def main() -> None:
             f"  {entry.actor}  {entry.operation:<13} {entry.target:<10} {entry.outcome}"
         )
     print(f"\nAudit intact (hash chain verifies): {log.verify()}")
+
+    # The override-rate half of the shared loop. This pattern's decision is made by
+    # deterministic policy and the AI narrative is only advisory, so folding past
+    # corrections into the draft would polish prose, not change the decision. What
+    # is worth watching is how often humans reject the packet: a rising rate is the
+    # signal to review the policy, so that half of the loop we keep.
+    store.save(FEEDBACK_FILE)
+    overrides, total, rate = store.override_rate()
+    print(f"\nRejection rate: {overrides}/{total} = {rate:.0%} "
+          f"(threshold {args.override_threshold:.0%})")
+    digest = store.review_needed(threshold=args.override_threshold)
+    if digest is not None:
+        print(f"\n*** REVIEW NEEDED: rejection rate {digest.rate:.0%} is above "
+              f"{digest.threshold:.0%} over the last {digest.total} decisions. ***")
+        for item in digest.recent[-5:]:
+            why = item["reason"] or "(no reason given)"
+            print(f"  {item['item_id']:<10} {item['entity']:<24} {item['decision']}: {why}")
 
 
 if __name__ == "__main__":

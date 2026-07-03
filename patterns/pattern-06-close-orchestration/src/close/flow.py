@@ -13,7 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from itertools import count
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple, Union
+
+from learning import Correction, CorrectionMemory
 
 from .mitigation import propose_mitigation
 from .models import (
@@ -26,8 +28,12 @@ from .models import (
 from .plan import apply_intervention
 from .scorer import Scorer
 
-# Called to get a human decision. Returns True to approve, False to reject.
-Approve = Callable[[StagedIntervention, ClosePlan], bool]
+# Called to get a human decision on a staged intervention. Returns True to apply and
+# False to dismiss, or a (decision, reason) pair when the human has a note. The reason
+# a person types when they dismiss is the signal the learning loop reads.
+Approve = Callable[
+    [StagedIntervention, ClosePlan], Union[bool, Tuple[bool, str]]
+]
 
 # A mitigation counts as high impact when its task's money at stake is at or
 # above this line. High-impact interventions are always logged.
@@ -117,24 +123,40 @@ def predict_and_stage(
     return ranked, staged
 
 
+def _decision(result: Union[bool, Tuple[bool, str]]) -> Tuple[bool, str]:
+    """Normalize a human decision. The approve callable may return a bare bool, or a
+    (approved, reason) pair when it has a note for the learning loop."""
+    if isinstance(result, tuple):
+        approved = bool(result[0])
+        reason = str(result[1]) if len(result) > 1 else ""
+        return approved, reason
+    return bool(result), ""
+
+
 def run_intervention(
     plan: ClosePlan,
     staged: StagedIntervention,
     *,
     approve: Approve,
     log: InterventionLog,
+    store: Optional[CorrectionMemory] = None,
 ) -> InterventionResult:
     """Ask a human to approve one staged intervention, then apply or not.
 
     Only on approval is the in-memory plan updated. A high-impact intervention
-    is logged either way, with its trace id and the actor.
+    is logged either way, with its trace id and the actor. Every human decision,
+    apply or dismiss, is remembered for the learning loop when a `store` is given.
     """
     task = plan.get(staged.mitigation.task_id)
     high_impact = task.impact >= HIGH_IMPACT_AT
 
-    if not approve(staged, plan):
+    approved, reason = _decision(approve(staged, plan))
+
+    if not approved:
         if high_impact:
             log.record("intervene", staged.staged_id, "rejected_by_human")
+        # A human dismissed the intervention. Their reason is the signal.
+        _remember(store, plan, staged, "rejected", reason)
         return InterventionResult(
             staged_id=staged.staged_id, outcome="rejected_by_human", plan=plan
         )
@@ -146,6 +168,48 @@ def run_intervention(
             staged.staged_id,
             f"applied:{staged.mitigation.action}",
         )
+    _remember(store, plan, staged, "approved", reason)
     return InterventionResult(
         staged_id=staged.staged_id, outcome="applied", plan=new_plan
+    )
+
+
+def _summarize_task(task) -> str:
+    return (
+        f"{task.name}, owner {task.owner}, impact {task.impact}, "
+        f"status {task.status}, deadline {task.deadline}"
+    )
+
+
+def _remember(
+    store: Optional[CorrectionMemory],
+    plan: ClosePlan,
+    staged: StagedIntervention,
+    decision: str,
+    reason: str,
+) -> None:
+    """Record the human's apply/dismiss as a teachable example and count it toward the
+    override rate. The entity is the task owner. `proposed` carries the task id, the
+    score, and the proposed action; a dismissal's reason is what the loop learns.
+
+    Note: this is PREDICTION memory, which transfers poorly across periods (the scorer
+    folds it back in only as a weak prior). So the loop stays cautious by design, and
+    the deterministic guard and the human still make every call."""
+    if store is None:
+        return
+    task = plan.get(staged.mitigation.task_id)
+    store.record(
+        Correction(
+            entity=task.owner,
+            item_id=task.task_id,
+            decision=decision,
+            reason=reason,
+            context=_summarize_task(task),
+            proposed=(
+                f"{task.task_id} score {staged.prediction.score} "
+                f"-> {staged.mitigation.action}"
+            ),
+            correction="",
+            amount=str(task.impact),
+        )
     )

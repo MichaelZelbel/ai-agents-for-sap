@@ -165,8 +165,42 @@ class ProposerError(RuntimeError):
     """The model returned something we could not turn into an extraction."""
 
 
-def build_prompt(request: CustomerRequest, catalog: ProductCatalog) -> str:
-    """The instruction we hand the model. Plain, and it shows the catalog."""
+def _render_examples(examples) -> str:
+    """Turn past human overrides into worked examples for the prompt: what the
+    customer asked for, what the agent proposed, and what the human did about it.
+    This is how the loop reaches the model, so it does not re-extract an order the
+    sales manager already rejected for this customer (the "usual" that maps to the
+    wrong SKU, a nickname the model got wrong last time)."""
+    if not examples:
+        return ""
+    blocks = []
+    for e in examples:
+        lines = [f"- Request: {e.context or '(no summary)'}"]
+        if e.proposed:
+            lines.append(f"  The agent proposed: {e.proposed}")
+        if e.decision == "corrected":
+            lines.append(f"  A human corrected it: {e.correction or e.reason}")
+        else:
+            lines.append("  A human rejected it; it was not released.")
+        if e.reason:
+            lines.append(f"  Reason: {e.reason}")
+        blocks.append("\n".join(lines))
+    return (
+        "Past human corrections and rejections for this customer. Learn from them "
+        "and do not repeat the same mistake:\n" + "\n".join(blocks) + "\n\n"
+    )
+
+
+def build_prompt(
+    request: CustomerRequest, catalog: ProductCatalog, examples=None
+) -> str:
+    """The instruction we hand the model. Plain, and it shows the catalog.
+
+    `examples` are past human overrides for this customer (corrections and
+    rejections), folded in as worked examples. This is the learning loop for the
+    model path: the agent sees what the sales manager changed or refused last
+    time and does not repeat it. The deterministic guard still checks the result,
+    so an example can only make the extraction better, never bypass a rule."""
     catalog_lines = "\n".join(
         f"- {p.sku}: {p.name}" for p in catalog.values()
     )
@@ -176,6 +210,7 @@ def build_prompt(request: CustomerRequest, catalog: ProductCatalog) -> str:
         f"Request text: {request.text}\n\n"
         "Products you may order (use the exact sku):\n"
         f"{catalog_lines}\n\n"
+        f"{_render_examples(examples)}"
         "Extract the products and quantities, the requested delivery date as an "
         "ISO date (YYYY-MM-DD), any discount percent mentioned, and the ship-to "
         "country as a two-letter code. If a field is not stated, use an empty "
@@ -242,15 +277,24 @@ class LlmBackedProposer:
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
         complete: Callable[[str], str] | None = None,
+        store: Any | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         self._complete = complete or self._call_openrouter
+        # Optional CorrectionMemory. When set, past overrides for this customer
+        # are folded into the prompt so the model learns from them.
+        self._store = store
 
     def extract(
         self, request: CustomerRequest, *, catalog: ProductCatalog
     ) -> ExtractedRequest:
-        raw = self._complete(build_prompt(request, catalog))
+        examples = (
+            self._store.examples_for(request.customer_id)
+            if self._store
+            else None
+        )
+        raw = self._complete(build_prompt(request, catalog, examples=examples))
         return parse_extraction(raw)
 
     def _call_openrouter(self, prompt: str) -> str:

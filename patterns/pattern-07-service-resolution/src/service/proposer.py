@@ -97,8 +97,37 @@ class ProposerError(RuntimeError):
     """The model returned something we could not turn into a step."""
 
 
-def build_prompt(context: CaseContext) -> str:
-    """The instruction we hand the model. Plain, and it shows the allowed steps."""
+def _render_examples(examples) -> str:
+    """Turn past human declines into worked examples for the prompt: what the case
+    looked like, what the agent proposed, and that a human declined it, and why.
+    This is how the loop reaches the model, folded in per asset model."""
+    if not examples:
+        return ""
+    blocks = []
+    for e in examples:
+        lines = [f"- Case: {e.context or '(no summary)'}"]
+        if e.proposed:
+            lines.append(f"  The agent proposed: {e.proposed}")
+        # In this pattern the human decision is confirm or decline, so an override
+        # is always a decline: the human refused the staged step.
+        lines.append("  A human declined it; it was not carried out.")
+        if e.reason:
+            lines.append(f"  Reason: {e.reason}")
+        blocks.append("\n".join(lines))
+    return (
+        "Past human corrections and declines for this asset model. Learn from them:\n"
+        + "\n".join(blocks) + "\n\n"
+    )
+
+
+def build_prompt(context: CaseContext, examples=None) -> str:
+    """The instruction we hand the model. Plain, and it shows the allowed steps.
+
+    `examples` are past human declines for this asset model, folded in as worked
+    examples. This is the learning loop for the model path: the agent sees what
+    reviewers refused last time and does not repeat it. The deterministic guard
+    still checks the result, so an example can only make the proposal better, never
+    bypass a rule."""
     ent = context.entitlement
     parts = ", ".join(
         f"{p.part_id} ({p.name}, {'in stock' if p.in_stock else 'out of stock'}, "
@@ -123,6 +152,7 @@ def build_prompt(context: CaseContext) -> str:
         f"- expires on: {ent.expires_on}\n\n"
         f"Prior incidents: {incidents or 'none'}\n"
         f"Parts: {parts}\n\n"
+        f"{_render_examples(examples)}"
         "Allowed step kinds: replace_under_warranty, repair_billable, "
         "dispatch_technician, reject_claim, escalate.\n\n"
         "Reply with ONLY a JSON object of this shape, no prose:\n"
@@ -179,13 +209,25 @@ class LlmBackedProposer:
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
         complete: Callable[[str], str] | None = None,
+        store: Any | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         self._complete = complete or self._call_openrouter
+        # Optional CorrectionMemory. When set, past declines for this asset model
+        # are folded into the prompt so the model learns from them.
+        self._store = store
 
     def propose(self, context: CaseContext) -> ProposedStep:
-        raw = self._complete(build_prompt(context))
+        # Rank past declines by asset model, with the likely part cost as the
+        # amount so similar-cost cases sort first. The step's own cost is not known
+        # until the model proposes, so the first part's cost is the best proxy.
+        examples = (
+            self._store.examples_for(context.asset.model, _first_part_cost(context))
+            if self._store
+            else None
+        )
+        raw = self._complete(build_prompt(context, examples=examples))
         return parse_step(raw, context=context)
 
     def _call_openrouter(self, prompt: str) -> str:

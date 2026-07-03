@@ -14,7 +14,7 @@ from .errors import (
     ServiceError,
     StagedActionNotFoundError,
 )
-from .flow import FlowResult, run_pattern7
+from .flow import FlowResult, HumanConfirmation, run_pattern7
 from .governed import AuditEntry, GovernedServiceSource
 from .guard import GuardConfig, default_config, evaluate
 from .models import (
@@ -43,6 +43,7 @@ from .source import MockServiceSource
 __all__ = [
     "run_pattern7",
     "FlowResult",
+    "HumanConfirmation",
     "GovernedServiceSource",
     "AuditEntry",
     "MockServiceSource",
