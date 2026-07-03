@@ -23,5 +23,6 @@ pythonpath = [
     "patterns/pattern-08-cash-application/src",
     "patterns/pattern-09-sales-order/src",
     "patterns/pattern-10-expense-audit/src",
+    "console",
 ]
-testpaths = ["patterns", "discovery", "lifecycle"]
+testpaths = ["patterns", "discovery", "lifecycle", "console"]

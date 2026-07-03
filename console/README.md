@@ -4,8 +4,28 @@ A small, SAP-Fiori-flavored console for the agents. It gives the propose → gua
 approve → log flow a face: an inbox of documents, the agent's proposal, the guard's
 verdict, action buttons, and the audit trail right there.
 
-One console, more than one agent. Ships wired to **two** patterns, switched from the
-picker in the top bar: Pattern 1 (invoice posting) and Pattern 2 (document triage).
+One console, one contract, **all ten** patterns. Switch between them from the picker in
+the top bar. Patterns 1 and 2 are wired inline in `serve.py`; Patterns 3 to 10 live in
+`extra_agents.py`, one small adapter each:
+
+| Picker | Pattern | Guard verdict shown | Audit chain |
+|---|---|---|---|
+| Nordwind AP Cockpit | 1 Invoice posting | PASS / FAIL | verifiable |
+| AP Triage Desk | 2 Document triage | router accepts / refuses | event trail |
+| Three-Way Match Desk | 3 Three-way match | PASS / FAIL | event trail |
+| Dispute Copilot | 4 Dispute (suggest-only) | draft ready / refused | event trail |
+| Procurement Approvals | 5 Procurement packet | in policy / escalate / blocked | verifiable |
+| Close Cockpit | 6 Close orchestration | on track / at risk | event trail |
+| Service Resolution Assist | 7 Service resolution | allow / needs-approval / deny | verifiable |
+| Cash Application | 8 Cash application | MATCH / PARTIAL / OVERPAID / REJECT | event trail |
+| Sales Order Desk | 9 Sales order | PASS / FLAG | verifiable |
+| Expense Audit | 10 Expense audit | compliant / violation per line | event trail |
+
+Every adapter drives its pattern's own runnable code with the OFFLINE, deterministic
+proposer, so the whole console runs with no OpenRouter key. Patterns 1, 5, 7, and 9
+carry a hash-chained audit log and report whether the chain verifies; the rest show a
+plainer event trail. Only the invoice-shaped cockpits accept a dropped PDF, so the
+console hides the drop tile for the others.
 
 ![Pattern 1: invoice posting](console.png)
 
@@ -44,13 +64,16 @@ at all. Same screen, different job.
 ## How it generalises
 
 Every pattern in this repo shares the same shape, so one console fits them all, and
-this build proves it with two. Each agent fills one neutral contract, an inbox and a
-detail with a proposal (a table), a verdict, some actions, and a trail, and the same
-page renders any of them. `InvoicePostingAgent` returns posting lines and Approve /
-Reject / Onboard; `TriageAgent` returns a category and its route and Confirm / Reject.
-The page does not know or care which pattern it is showing.
+this build renders all ten through it. Each agent fills one neutral contract, an inbox
+and a detail with a proposal (a table), a verdict, some actions, and a trail, and the
+same page renders any of them. `InvoicePostingAgent` returns posting lines and Approve
+/ Reject / Onboard; the cash-application adapter returns a proposed clearing and
+Approve / Reject; the dispute adapter is suggest-only and just records that a human
+handled the draft. The page does not know or care which pattern it is showing.
 
-To add a third, write one more adapter (`inbox`, `detail`, `act`) and register it in
-`AGENTS`. It appears in the picker; nothing in the page changes.
+To add another, write one more adapter (`inbox`, `detail`, `act`) and register it: put
+invoice-shaped agents in `serve.py`, everything else in `extra_agents.py`'s
+`build_extra_agents()`. It appears in the picker; nothing in the page changes. A broken
+adapter is skipped at startup so it never takes the whole console down.
 
 Built with the Python standard library only (`http.server`) plus one static HTML page.

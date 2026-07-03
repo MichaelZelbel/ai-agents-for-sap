@@ -72,6 +72,10 @@ class DocumentAgent:
     agent_id = ""
     title = ""
     actor = ""
+    # Only the invoice-shaped agents accept a dropped PDF (read by the vision model).
+    # The rest work from their seeded inbox, so the console hides the drop zone for them.
+    accepts_upload = False
+    inbox_label = "Inbox"
 
     def __init__(self) -> None:
         self.mock = MockSapClient()
@@ -109,6 +113,8 @@ class InvoicePostingAgent(DocumentAgent):
     agent_id = "invoice"
     title = "Nordwind AP Cockpit"
     actor = "invoice-agent@nordwind"
+    accepts_upload = True
+    inbox_label = "Invoice inbox"
 
     def setup(self) -> None:
         self.mock.register_document(
@@ -289,6 +295,17 @@ class TriageAgent(DocumentAgent):
 
 load_dotenv()
 AGENTS: dict[str, DocumentAgent] = {a.agent_id: a for a in (InvoicePostingAgent(), TriageAgent())}
+
+# Patterns 3-10 live in console/extra_agents.py (one adapter each). Merge them in.
+sys.path.insert(0, str(HERE))
+try:
+    from extra_agents import build_extra_agents  # noqa: E402
+
+    for _agent in build_extra_agents():
+        AGENTS[_agent.agent_id] = _agent
+except Exception as exc:  # pragma: no cover - the two built-in agents still work
+    print(f"[console] extra agents unavailable: {exc}")
+
 DEFAULT_AGENT = "invoice"
 
 
@@ -313,7 +330,11 @@ class Handler(BaseHTTPRequestHandler):
         if route_ in ("/", "/index.html"):
             self._send((HERE / "index.html").read_bytes(), ctype="text/html; charset=utf-8")
         elif route_ == "/api/agents":
-            self._send([{"id": a.agent_id, "title": a.title, "actor": a.actor} for a in AGENTS.values()])
+            self._send([
+                {"id": a.agent_id, "title": a.title, "actor": a.actor,
+                 "accepts_upload": a.accepts_upload, "inbox_label": a.inbox_label}
+                for a in AGENTS.values()
+            ])
         elif route_ == "/api/inbox":
             self._send({"items": pick(self._q("agent")).inbox()})
         elif route_ == "/api/document":
