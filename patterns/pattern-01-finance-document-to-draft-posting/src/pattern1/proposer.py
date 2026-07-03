@@ -91,7 +91,7 @@ def _render_examples(examples) -> str:
         return ""
     blocks = []
     for e in examples:
-        lines = [f"- Invoice: {e.invoice or '(no summary)'}"]
+        lines = [f"- Invoice: {e.context or '(no summary)'}"]
         if e.proposed:
             lines.append(f"  The agent proposed: {e.proposed}")
         if e.decision == "corrected":

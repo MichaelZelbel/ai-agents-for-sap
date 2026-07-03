@@ -25,4 +25,4 @@ pythonpath = [
     "patterns/pattern-10-expense-audit/src",
     "console",
 ]
-testpaths = ["patterns", "discovery", "lifecycle", "console"]
+testpaths = ["patterns", "discovery", "lifecycle", "console", "shared/tests"]

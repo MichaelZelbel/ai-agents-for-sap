@@ -45,7 +45,7 @@ from sap_client import (  # noqa: E402
     extract_document,
 )
 
-from pattern1.feedback import FeedbackStore  # noqa: E402
+from learning import CorrectionMemory  # noqa: E402
 from pattern1.flow import DEFAULT_APPROVER, HumanDecision, run_pattern1  # noqa: E402
 from pattern1.proposer import LlmBackedProposer, RuleBasedProposer  # noqa: E402
 from pattern1.validator import default_config  # noqa: E402
@@ -194,7 +194,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    store = FeedbackStore() if args.reset_feedback else FeedbackStore.load(FEEDBACK_FILE)
+    store = CorrectionMemory() if args.reset_feedback else CorrectionMemory.load(FEEDBACK_FILE)
 
     if args.proposer == "llm":
         proposer = (
@@ -228,7 +228,7 @@ def main() -> None:
         active_cost_centers=mock.active_cost_centers(),
         min_confidence=args.min_confidence if args.min_confidence > 0 else None,
     )
-    learned = store.cost_center_for(document.vendor)
+    learned = store.learned_field(document.vendor, "cost_center")
     if learned:
         print(f"Learned from past reviews: {document.vendor} posts to {learned}.")
 

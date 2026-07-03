@@ -12,10 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional, Union
 
+from learning import Correction, CorrectionMemory
 from sap_client import Document, GovernedSapClient, PostingResult, ProposedPosting
 
 from .determination import DEFAULT_COST_CENTER, apply_determination
-from .feedback import Decision, FeedbackStore
 from .proposer import Proposer
 from .validator import ValidationResult, ValidatorConfig, validate_posting
 
@@ -74,14 +74,14 @@ def run_pattern1(
     approve: Approve,
     cost_center: str = DEFAULT_COST_CENTER,
     approver: str = DEFAULT_APPROVER,
-    store: Optional[FeedbackStore] = None,
+    store: Optional[CorrectionMemory] = None,
 ) -> FlowResult:
     document = client.read_document(doc_id)
     posting = proposer.propose(document, posting_date=posting_date)
     # The learning loop, part one: if a human has already moved this vendor's
-    # invoices to a cost center, propose it with that applied. The validator still
-    # checks it below, so a wrong learned value is caught like any other.
-    learned_cc = store.cost_center_for(document.vendor) if store else None
+    # invoices to a cost center, propose it with that applied (learned determination).
+    # The validator still checks it below, so a wrong learned value is caught.
+    learned_cc = store.learned_field(document.vendor, "cost_center") if store else None
     posting = apply_determination(document, posting, cost_center=learned_cc or cost_center)
 
     validation = validate_posting(document, posting, config=config)
@@ -154,7 +154,7 @@ def _summarize_posting(p: ProposedPosting) -> str:
 
 
 def _remember(
-    store: Optional[FeedbackStore],
+    store: Optional[CorrectionMemory],
     document: Document,
     doc_id: str,
     kind: str,
@@ -167,18 +167,17 @@ def _remember(
     on any field, plus it feeds the override rate."""
     if store is None:
         return
+    cost_center = decision.corrected_cost_center if kind == "corrected" else ""
     store.record(
-        Decision(
-            doc_id=doc_id,
-            vendor=document.vendor,
+        Correction(
+            entity=document.vendor,
+            item_id=doc_id,
             decision=kind,
             reason=decision.rationale,
-            corrected_cost_center=(
-                decision.corrected_cost_center if kind == "corrected" else ""
-            ),
-            invoice=_summarize_document(document),
+            context=_summarize_document(document),
             proposed=_summarize_posting(proposed),
             correction=correction,
-            gross=str(document.gross_amount),
+            amount=str(document.gross_amount),
+            fields=({"cost_center": cost_center} if cost_center else {}),
         )
     )

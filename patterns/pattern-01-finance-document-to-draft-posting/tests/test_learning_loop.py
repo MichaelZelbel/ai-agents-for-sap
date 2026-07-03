@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from sap_client import Document, GovernedSapClient, MockSapClient
 
-from pattern1.feedback import FeedbackStore
+from learning import CorrectionMemory
 from pattern1.flow import HumanDecision, run_pattern1
 from pattern1.proposer import RuleBasedProposer
 
@@ -41,14 +41,14 @@ def test_a_correction_is_remembered_and_applied_to_the_next_invoice():
                                     Decimal("2000.00"), Decimal("380.00"),
                                     Decimal("2380.00"), "2026-06-28"))
     client = GovernedSapClient(mock, entitlements=FULL_ACCESS)
-    store = FeedbackStore()
+    store = CorrectionMemory()
 
     # 1) A human approves INV-1001 but moves it to CC-2000 (marketing).
     r1 = _run(client, mock, "INV-1001", store,
               lambda *a: HumanDecision(True, rationale="marketing campaign, not ops",
                                        corrected_cost_center="CC-2000"))
     assert r1.outcome == "posted"
-    assert store.cost_center_for("Office Supplies Co") == "CC-2000"
+    assert store.learned_field("Office Supplies Co", "cost_center") == "CC-2000"
 
     # 2) The next invoice from that vendor is proposed with CC-2000 already applied,
     #    with no human correction this time. The human just sees the right draft.
@@ -66,20 +66,20 @@ def test_a_correction_is_remembered_and_applied_to_the_next_invoice():
 def test_a_human_edit_still_has_to_pass_the_guard():
     mock = MockSapClient()
     client = GovernedSapClient(mock, entitlements=FULL_ACCESS)
-    store = FeedbackStore()
+    store = CorrectionMemory()
     # The human "corrects" INV-1001 to a cost center that does not exist.
     r = _run(client, mock, "INV-1001", store,
              lambda *a: HumanDecision(True, corrected_cost_center="CC-9999"))
     assert r.outcome == "rejected_by_validator"
     assert any("Cost center CC-9999" in reason for reason in r.validation.reasons)
     # The bad edit was not learned as a preference.
-    assert store.cost_center_for("Office Supplies Co") is None
+    assert store.learned_field("Office Supplies Co", "cost_center") is None
 
 
 def test_every_decision_is_counted_for_the_override_rate():
     mock = MockSapClient()
     client = GovernedSapClient(mock, entitlements=FULL_ACCESS)
-    store = FeedbackStore()
+    store = CorrectionMemory()
     _run(client, mock, "INV-1001", store, lambda *a: HumanDecision(True))            # approved
     _run(client, mock, "INV-1002", store, lambda *a: HumanDecision(False, rationale="hold"))  # rejected
     overrides, total, rate = store.override_rate()
