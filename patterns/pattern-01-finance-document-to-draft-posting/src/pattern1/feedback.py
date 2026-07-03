@@ -6,10 +6,14 @@ Two jobs, both automatic, both on the safe side of the guard:
    field, is kept as a worked example: the invoice, what the agent proposed, what
    the human changed, and why. On a new invoice we retrieve the most RELEVANT of
    those examples (same vendor and similar amount, not just the newest) and show
-   them to the model. One field, the cost center, we can also apply deterministically
-   so the loop works even offline with no model. The deterministic validator still
-   checks every result, so a wrong "learned" value is caught exactly like any other.
-   The agent gets better without anyone editing code.
+   them to the model, for the fuzzy judgment calls. Some corrections are not
+   judgment calls but exact vendor-level mappings: the cost center is one. Those we
+   learn as a deterministic default and apply through the same determination step
+   SAP uses for tax codes and cost centers, rather than hope the model remembers an
+   exact value. (A nice side effect: that half of the loop then works offline, with
+   no model.) The deterministic validator still checks every result, so a wrong
+   "learned" value is caught exactly like any other, and the agent gets better
+   without anyone editing code.
 
 2. Watch the override rate. Every decision, approved-as-is, corrected, or
    rejected, is counted. When the share of drafts the humans had to touch climbs
@@ -119,10 +123,11 @@ class FeedbackStore:
         return score
 
     def cost_center_for(self, vendor: str) -> str | None:
-        """A shortcut for the one field the offline flow can set on its own: the
-        cost center a human last moved this vendor's invoices to. It is applied
-        deterministically (and re-checked by the guard), so the loop improves even
-        without a model. Everything else is learned through examples_for above."""
+        """A learned deterministic default: the cost center a human last moved this
+        vendor's invoices to. Cost-center and tax-code determination is deterministic
+        configuration in real SAP, so an exact per-vendor mapping belongs here,
+        applied through determination and re-checked by the guard, not left to the
+        model. Fuzzier corrections are learned through examples_for above."""
         for d in reversed(self._decisions):
             if d.vendor == vendor and d.corrected_cost_center:
                 return d.corrected_cost_center
