@@ -30,13 +30,13 @@ Money is always `Decimal`, never float. Frozen dataclasses for the models. Zero 
 
 **The proposer (the AI's job).** Behind a `Proposer` Protocol. An LLM-backed proposer calls OpenRouter (OpenAI-compatible chat completions), reads `OPENROUTER_API_KEY` from the environment, default model `openai/gpt-4o-mini`, and parses the model's JSON into typed objects with structural checks only (the business rules are the guard's job). Accept an injectable `complete: Callable[[str], str]` so tests pass a fake reply and need no key or network. Ship a deterministic rule-based proposer too, so the flow runs offline.
 
-**Determination (deterministic, not the model's guess).** Values that a real ERP determines by configuration — the tax code, the cost center — are set by a small deterministic step between propose and validate, not guessed by the AI. Read the tax code off the invoice's own rate; assign a default active cost center. Then the guard checks them against master data. This keeps the codes as trustworthy as the balance check and works for both the rule and LLM proposers.
+**Determination (deterministic, not the model's guess).** Values that a real ERP determines by configuration — the tax code, the cost center — are set by a small deterministic step between propose and validate, not guessed by the AI. Read the tax code off the invoice's own rate; assign a default active cost center. Then the guard checks them against master data. This keeps the codes as trustworthy as the balance check and works for both the rule and LLM proposers. For an invoice that mixes tax rates (a hotel or catering bill), the tax code is the set of codes for every rate present (for example `V2+V1+V0`), and the proposer books one expense-plus-tax pair per rate.
 
 **The validator / deterministic guard (the decision).** Pure Python rules, returns a result with `status` ("PASS"/"FAIL") and a list of machine-readable `reasons`. It never calls the model and gives the same answer every time. It checks the proposal against the source and against master data. A full guard checks, as applicable:
 - the posting balances (debits == credits within a small `Decimal` tolerance) and the total matches the document gross;
 - accounts are on the allowed list; amounts are positive; the date and ids are present and consistent;
 - the **vendor is in the Business Partner master** (else refuse: "Vendor not in master data");
-- the **tax code is known and its rate matches** the invoice's actual net/tax rate;
+- the **tax code is known and its rate matches** the invoice's actual net/tax rate; and for a **mixed-rate invoice**, every per-rate bucket foots (net times rate equals its tax) and the buckets sum to the invoice's net, tax, and gross;
 - the **cost center exists and is active**;
 - for a document read from a scan, the **reading confidence** is above a threshold (else hold for a human);
 - for match-and-check: quantities and money agree across all documents; for classify-and-route: the category is one of the known set.
@@ -55,7 +55,7 @@ Money is always `Decimal`, never float. Frozen dataclasses for the models. Zero 
 
 ## Step 4: read a real document (optional)
 
-To go from typed fields to a real invoice, add a document reader: one call to a vision-capable model via OpenRouter that returns the fields as JSON, with a `confidence`. Report the numbers as printed (never "fix" them; the guard catches a broken invoice). For a PDF, include OpenRouter's file-parser plugin (`{"id":"file-parser","pdf":{"engine":"pdf-text"}}`) so the PDF actually reaches the model. Keep it injectable for offline tests. If the model cannot read the file, it returns an error rather than guessing.
+To go from typed fields to a real invoice, add a document reader: one call to a vision-capable model via OpenRouter that returns the fields as JSON, with a `confidence`. Report the numbers as printed (never "fix" them; the guard catches a broken invoice), and be tolerant of locale number formats (European `1.234,56` means `1234.56`, a format change, not a value change). When the invoice mixes tax rates, return a per-rate breakdown (`tax_lines`, one `{rate, net, tax}` per rate) and let the totals foot from it. For a PDF, include OpenRouter's file-parser plugin: a scanned invoice with no text layer needs OCR (`{"id":"file-parser","pdf":{"engine":"mistral-ocr"}}`), while a PDF with selectable text can use the cheaper `pdf-text` engine. Keep it injectable for offline tests. If the model cannot read the file, it returns an error rather than guessing.
 
 ## Step 5: tests first, and run them
 
