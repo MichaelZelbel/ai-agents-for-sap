@@ -95,7 +95,9 @@ def _content_part(path: Path) -> dict[str, Any]:
     """Build the message content part for an image or a PDF."""
     mime, url = _data_url(path)
     if mime == "application/pdf":
-        # OpenRouter parses the PDF server-side for models that accept files.
+        # Send the PDF as a file part. A model that reads PDFs natively uses it
+        # directly; otherwise the file-parser plugin (added below) extracts the
+        # text and passes that to the model.
         return {"type": "file", "file": {"filename": path.name, "file_data": url}}
     return {"type": "image_url", "image_url": {"url": url}}
 
