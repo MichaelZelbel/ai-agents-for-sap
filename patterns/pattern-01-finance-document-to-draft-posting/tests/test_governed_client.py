@@ -91,10 +91,10 @@ def test_approval_is_attributed_to_the_named_human():
     client = governed()
     staged = client.stage_posting(make_posting())
     client.record_approval(
-        staged.staged_id, approver="a.schmidt@nordwind", rationale="checked the PO"
+        staged.staged_id, approver="e.roth@nordwind", rationale="checked the PO"
     )
     approve = next(e for e in client.audit_log if e.operation == "approve")
-    assert approve.actor == "a.schmidt@nordwind"
+    assert approve.actor == "e.roth@nordwind"
     assert approve.rationale == "checked the PO"
 
 
@@ -105,12 +105,12 @@ def test_rejection_keeps_the_reviewers_reason():
     staged = client.stage_posting(make_posting())
     client.record_rejection(
         staged.staged_id,
-        approver="a.schmidt@nordwind",
+        approver="e.roth@nordwind",
         rationale="cost center should be CC-2000, this is a campaign cost",
     )
     reject = client.audit_log[-1]
     assert reject.operation == "reject"
-    assert reject.actor == "a.schmidt@nordwind"
+    assert reject.actor == "e.roth@nordwind"
     assert "CC-2000" in reject.rationale
     assert client.verify_audit() is True
 
@@ -121,7 +121,7 @@ def test_tampering_with_a_rationale_is_detected():
     client = governed()
     staged = client.stage_posting(make_posting())
     client.record_approval(
-        staged.staged_id, approver="a.schmidt@nordwind", rationale="looks right"
+        staged.staged_id, approver="e.roth@nordwind", rationale="looks right"
     )
     # Rewrite why someone approved. The rationale is inside the hash, so it shows.
     idx = next(

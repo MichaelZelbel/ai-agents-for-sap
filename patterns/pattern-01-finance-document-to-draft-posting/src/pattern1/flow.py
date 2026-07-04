@@ -20,7 +20,7 @@ from .proposer import Proposer
 from .validator import ValidationResult, ValidatorConfig, validate_posting
 
 # The default identity to attribute a decision to when a caller only says yes/no.
-DEFAULT_APPROVER = "a.schmidt@nordwind"
+DEFAULT_APPROVER = "e.roth@nordwind"
 
 
 @dataclass(frozen=True)

@@ -132,7 +132,7 @@ def test_posting_records_the_named_human_and_their_note():
     def approve_with_note(*_args):
         return HumanDecision(
             approved=True,
-            approver="a.schmidt@nordwind",
+            approver="e.roth@nordwind",
             rationale="matched the PO, campaign spend",
         )
 
@@ -146,7 +146,7 @@ def test_posting_records_the_named_human_and_their_note():
     )
     assert result.outcome == "posted"
     approve = next(e for e in client.audit_log if e.operation == "approve")
-    assert approve.actor == "a.schmidt@nordwind"
+    assert approve.actor == "e.roth@nordwind"
     assert "campaign spend" in approve.rationale
     assert client.verify_audit() is True
 
@@ -158,7 +158,7 @@ def test_rejection_reason_reaches_the_audit_trail():
     def reject_with_reason(*_args):
         return HumanDecision(
             approved=False,
-            approver="a.schmidt@nordwind",
+            approver="e.roth@nordwind",
             rationale="cost center wrong; this is marketing, not operations",
         )
 
@@ -174,7 +174,7 @@ def test_rejection_reason_reaches_the_audit_trail():
     assert result.posting_result is None
     reject = client.audit_log[-1]
     assert reject.operation == "reject"
-    assert reject.actor == "a.schmidt@nordwind"
+    assert reject.actor == "e.roth@nordwind"
     assert "marketing" in reject.rationale
 
 
