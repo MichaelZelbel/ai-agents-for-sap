@@ -27,8 +27,9 @@ build/
 .coverage
 htmlcov/
 
-# Local Claude Code session settings
-.claude/
+# Local Claude Code session settings, but ship the skills the book builds on
+.claude/*
+!.claude/skills/
 
 # Pattern 1 learning-loop runtime memory
 feedback.jsonl
