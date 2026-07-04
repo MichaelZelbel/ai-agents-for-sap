@@ -10,16 +10,50 @@ Point it at a real tenant by implementing `AbapRepositorySource` for your system
 the README explains which repository tables and services to read.
 """
 
-from .models import CustomObject, ObjectRegister
+from .cleancore import CleanCoreVerdict, classify, classify_register, level_counts, level_d_exposure
+from .models import (
+    CustomObject,
+    InterfaceInfo,
+    LandscapeProfile,
+    ObjectRegister,
+    ProcessInfo,
+    RegisterFormatError,
+)
 from .register import build_register, fit_to_standard_findings, to_grounding
-from .sources import MockRepositorySource, RepositorySource
+from .scorecard import (
+    FitScore,
+    decommission_candidates,
+    fit_to_standard_scorecard,
+    retention_candidates,
+)
+from .sources import (
+    AbapRepositorySource,
+    JsonRepositorySource,
+    MockRepositorySource,
+    RepositorySource,
+)
 
 __all__ = [
     "CustomObject",
+    "ProcessInfo",
+    "InterfaceInfo",
+    "LandscapeProfile",
     "ObjectRegister",
+    "RegisterFormatError",
     "RepositorySource",
     "MockRepositorySource",
+    "JsonRepositorySource",
+    "AbapRepositorySource",
     "build_register",
     "to_grounding",
     "fit_to_standard_findings",
+    "classify",
+    "classify_register",
+    "level_counts",
+    "level_d_exposure",
+    "CleanCoreVerdict",
+    "fit_to_standard_scorecard",
+    "decommission_candidates",
+    "retention_candidates",
+    "FitScore",
 ]

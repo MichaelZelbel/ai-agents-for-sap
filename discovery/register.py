@@ -11,7 +11,7 @@ Three jobs:
 
 from __future__ import annotations
 
-from .models import ObjectRegister
+from .models import LandscapeProfile, ObjectRegister
 from .sources import RepositorySource
 
 # Below this many uses a month, an object is worth questioning, not automating.
@@ -19,7 +19,19 @@ RETIREMENT_THRESHOLD = 25
 
 
 def build_register(source: RepositorySource) -> ObjectRegister:
-    return ObjectRegister(system=source.system_name(), objects=tuple(source.objects()))
+    """Read a source into an ObjectRegister. A source may optionally offer a
+    `profile()`, `processes()`, and `interfaces()`; those fill out the landscape when
+    present, and are simply empty for a source that only maps the object directory."""
+    profile = getattr(source, "profile", None)
+    processes = getattr(source, "processes", None)
+    interfaces = getattr(source, "interfaces", None)
+    return ObjectRegister(
+        system=source.system_name(),
+        objects=tuple(source.objects()),
+        profile=profile() if callable(profile) else LandscapeProfile(),
+        processes=tuple(processes()) if callable(processes) else (),
+        interfaces=tuple(interfaces()) if callable(interfaces) else (),
+    )
 
 
 def fit_to_standard_findings(register: ObjectRegister) -> list[str]:
