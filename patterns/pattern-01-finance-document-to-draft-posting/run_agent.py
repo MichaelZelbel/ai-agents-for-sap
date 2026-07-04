@@ -18,7 +18,8 @@ already applied, and the run prints the override rate. When that rate crosses
 --override-threshold, it prints a review, so a human looks because the number moved.
 
 You need no SAP account. Everything runs in memory. To read a PDF or image invoice,
-or to use --proposer llm, put your key in a file named .env next to this script:
+or to use --proposer llm, put your key in a file named .env in the repo's top
+folder (copy .env.example to .env and fill it in). One .env serves every pattern:
 OPENROUTER_API_KEY=sk-or-...
 """
 
@@ -26,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from dataclasses import replace
 from decimal import Decimal
@@ -37,6 +37,12 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE / "src"))
 sys.path.insert(0, str(REPO / "shared"))
+
+from dotenv_loader import load_dotenv  # noqa: E402
+
+# One key, every pattern: load the nearest .env from here up to the repo root,
+# so a single .env in the repo's top folder is enough for every agent.
+load_dotenv(HERE)
 
 from sap_client import (  # noqa: E402
     Document,
@@ -51,22 +57,6 @@ from pattern1.proposer import LlmBackedProposer, RuleBasedProposer  # noqa: E402
 from pattern1.validator import default_config  # noqa: E402
 
 FEEDBACK_FILE = HERE / "feedback.jsonl"
-
-
-def load_dotenv() -> None:
-    """Read KEY=VALUE lines from a .env file next to this script into the
-    environment, so your OpenRouter key persists on disk and every run and
-    every tool can see it. Values already set in the environment win.
-    """
-    env_file = HERE / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
 def load_invoice_file(path: str) -> Document:
@@ -131,8 +121,6 @@ def make_approver(mode: str, approver: str, rationale: str | None, correct_cc: s
 
 
 def main() -> None:
-    load_dotenv()
-
     parser = argparse.ArgumentParser(description="Run Pattern 1 end to end.")
     parser.add_argument("--doc", default="INV-1001", help="document id to post")
     parser.add_argument(

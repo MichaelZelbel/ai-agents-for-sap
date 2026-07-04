@@ -27,6 +27,11 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE / "src"))
 sys.path.insert(0, str(REPO / "shared"))
 
+from dotenv_loader import load_dotenv  # noqa: E402
+
+# One key, every pattern: load the nearest .env from here up to the repo root.
+load_dotenv(HERE)
+
 from close.flow import (  # noqa: E402
     InterventionLog,
     predict_and_stage,

@@ -29,6 +29,11 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE / "src"))
 sys.path.insert(0, str(REPO / "shared"))
 
+from dotenv_loader import load_dotenv  # noqa: E402
+
+# One key, every pattern: load the nearest .env from here up to the repo root.
+load_dotenv(HERE)
+
 from sap_client import Document, MockSapClient  # noqa: E402
 
 from learning import CorrectionMemory  # noqa: E402
