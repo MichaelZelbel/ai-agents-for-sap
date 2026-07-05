@@ -1,0 +1,313 @@
+{
+  "schema": "sap-landscape/v1",
+  "system": "Nordwind Production (S/4HANA, on-prem)",
+  "profile": {
+    "product": "SAP S/4HANA 2023, on-prem",
+    "modules_in_use": [
+      "FI",
+      "CO",
+      "MM"
+    ],
+    "modules_not_used": [
+      "EWM",
+      "TM",
+      "PP"
+    ],
+    "detail": "Finance-heavy landscape; accounts payable is the custom hot spot."
+  },
+  "objects": [
+    {
+      "name": "ZTHREEWAY_TOL",
+      "obj_type": "table",
+      "package": "ZFI_AP",
+      "description": "Per-vendor three-way-match tolerances (quantity and price).",
+      "author": "M.WEBER",
+      "business_owner": "AP lead",
+      "depends_on": [
+        "LFA1"
+      ],
+      "monthly_uses": 4100,
+      "last_used": "2026-06",
+      "complexity": 2,
+      "clean_core_level": "",
+      "extension_mechanism": "",
+      "non_released_touched": [],
+      "successor_api": "",
+      "standard_alternative": "MM tolerance keys (transaction OMR6) may already cover this.",
+      "replacement_type": "config",
+      "criticality": "high",
+      "business_value": "medium",
+      "remediation_effort": "medium",
+      "detail": "fields: vendor, qty_tolerance, price_tolerance, valid_from"
+    },
+    {
+      "name": "ZZ_APPROVAL_LANE",
+      "obj_type": "custom_field",
+      "package": "ZFI_AP",
+      "description": "Approval-lane classification stamped on the invoice header.",
+      "author": "M.WEBER",
+      "business_owner": "AP lead",
+      "depends_on": [
+        "BKPF"
+      ],
+      "monthly_uses": null,
+      "last_used": "",
+      "complexity": null,
+      "clean_core_level": "B",
+      "extension_mechanism": "classic_api",
+      "non_released_touched": [],
+      "successor_api": "",
+      "standard_alternative": "",
+      "replacement_type": "",
+      "criticality": "",
+      "business_value": "medium",
+      "remediation_effort": "",
+      "detail": "append field on standard table BKPF; values: STANDARD, HIGH_VALUE, EXCEPTION"
+    },
+    {
+      "name": "Z_TAX_DETERMINE_NW",
+      "obj_type": "function_module",
+      "package": "ZFI_TAX",
+      "description": "Bespoke tax code determination for a legacy vendor group.",
+      "author": "A.SCHMIDT",
+      "business_owner": "Tax team",
+      "depends_on": [
+        "ZTAX_RULES",
+        "T007A"
+      ],
+      "monthly_uses": 900,
+      "last_used": "2026-06",
+      "complexity": 3,
+      "clean_core_level": "B",
+      "extension_mechanism": "classic_api",
+      "non_released_touched": [],
+      "successor_api": "",
+      "standard_alternative": "Standard tax determination via the condition technique / tax codes.",
+      "replacement_type": "config",
+      "criticality": "high",
+      "business_value": "medium",
+      "remediation_effort": "high",
+      "detail": "called from the invoice-posting enhancement ZEI_INVOICE_POST"
+    },
+    {
+      "name": "ZTAX_RULES",
+      "obj_type": "table",
+      "package": "ZFI_TAX",
+      "description": "Custom tax-rule lookup for the legacy vendor group.",
+      "author": "A.SCHMIDT",
+      "business_owner": "Tax team",
+      "depends_on": [],
+      "monthly_uses": 900,
+      "last_used": "",
+      "complexity": null,
+      "clean_core_level": "",
+      "extension_mechanism": "",
+      "non_released_touched": [],
+      "successor_api": "",
+      "standard_alternative": "",
+      "replacement_type": "",
+      "criticality": "",
+      "business_value": "medium",
+      "remediation_effort": "",
+      "detail": "fields: vendor_group, country, tax_code, rate"
+    },
+    {
+      "name": "ZFI_TRIAGE",
+      "obj_type": "transaction",
+      "package": "ZFI_AP",
+      "description": "AP triage cockpit: route an incoming document to the right desk.",
+      "author": "M.WEBER",
+      "business_owner": "AP lead",
+      "depends_on": [
+        "ZFI_TRIAGE_PROG"
+      ],
+      "monthly_uses": 3200,
+      "last_used": "2026-06",
+      "complexity": 4,
+      "clean_core_level": "",
+      "extension_mechanism": "",
+      "non_released_touched": [],
+      "successor_api": "",
+      "standard_alternative": "Standard workflow inbox or a Joule triage agent before extending this.",
+      "replacement_type": "sap_build",
+      "criticality": "high",
+      "business_value": "medium",
+      "remediation_effort": "high",
+      "detail": "dialog transaction over program ZFI_TRIAGE_PROG"
+    },
+    {
+      "name": "ZFI_TRIAGE_PROG",
+      "obj_type": "program",
+      "package": "ZFI_AP",
+      "description": "The program behind the triage cockpit; classifies and routes documents.",
+      "author": "M.WEBER",
+      "business_owner": "AP lead",
+      "depends_on": [
+        "ZTHREEWAY_TOL",
+        "BKPF"
+      ],
+      "monthly_uses": 3200,
+      "last_used": "2026-06",
+      "complexity": 5,
+      "clean_core_level": "B",
+      "extension_mechanism": "classic_api",
+      "non_released_touched": [],
+      "successor_api": "",
+      "standard_alternative": "",
+      "replacement_type": "",
+      "criticality": "",
+      "business_value": "medium",
+      "remediation_effort": "",
+      "detail": "ABAP report; classifies po_invoice / direct_expense / not_an_invoice"
+    },
+    {
+      "name": "Z_I_OPEN_AP_ITEMS",
+      "obj_type": "cds_view",
+      "package": "ZFI_AP",
+      "description": "Analytical view of open accounts-payable items with aging buckets.",
+      "author": "R.KHAN",
+      "business_owner": "Controlling",
+      "depends_on": [
+        "BSIK",
+        "LFA1"
+      ],
+      "monthly_uses": 15000,
+      "last_used": "2026-06",
+      "complexity": 2,
+      "clean_core_level": "A",
+      "extension_mechanism": "released_api",
+      "non_released_touched": [],
+      "successor_api": "",
+      "standard_alternative": "",
+      "replacement_type": "",
+      "criticality": "",
+      "business_value": "high",
+      "remediation_effort": "",
+      "detail": "CDS view on released interfaces; consumed by a Fiori list and several reports"
+    },
+    {
+      "name": "ZCL_DISPUTE_ROUTER",
+      "obj_type": "class",
+      "package": "ZFI_AP",
+      "description": "Bespoke routing logic for vendor disputes.",
+      "author": "(left the company)",
+      "business_owner": "(unowned)",
+      "depends_on": [
+        "ZTHREEWAY_TOL"
+      ],
+      "monthly_uses": 3,
+      "last_used": "2025-11",
+      "complexity": 3,
+      "clean_core_level": "",
+      "extension_mechanism": "",
+      "non_released_touched": [],
+      "successor_api": "",
+      "standard_alternative": "SAP Dispute Management (FSCM) covers most of this.",
+      "replacement_type": "config",
+      "criticality": "low",
+      "business_value": "low",
+      "remediation_effort": "low",
+      "detail": "barely used; owner gone; a retirement candidate"
+    },
+    {
+      "name": "ZEI_INVOICE_POST",
+      "obj_type": "enhancement",
+      "package": "ZFI_TAX",
+      "description": "Implicit enhancement on invoice posting; injects the bespoke tax rule.",
+      "author": "A.SCHMIDT",
+      "business_owner": "Tax team",
+      "depends_on": [
+        "Z_TAX_DETERMINE_NW"
+      ],
+      "monthly_uses": 900,
+      "last_used": "2026-06",
+      "complexity": 3,
+      "clean_core_level": "D",
+      "extension_mechanism": "implicit_enhancement",
+      "non_released_touched": [
+        "standard invoice-posting flow"
+      ],
+      "successor_api": "",
+      "standard_alternative": "",
+      "replacement_type": "",
+      "criticality": "high",
+      "business_value": "medium",
+      "remediation_effort": "high",
+      "detail": "implicit enhancement point in the posting logic; the clean-core risk to watch"
+    }
+  ],
+  "processes": [
+    {
+      "name": "Accounts payable invoice-to-pay",
+      "area": "P2P",
+      "variants": 4,
+      "deviation_from_standard": "custom triage cockpit and per-vendor tolerance table",
+      "monthly_volume": 3200,
+      "manual_rework": "high",
+      "kpis": [
+        "throughput",
+        "exceptions",
+        "days-to-post"
+      ],
+      "objects": [
+        "ZFI_TRIAGE",
+        "ZFI_TRIAGE_PROG",
+        "ZTHREEWAY_TOL",
+        "Z_TAX_DETERMINE_NW"
+      ],
+      "detail": "Highest-volume, most manual process; the prime automation target."
+    },
+    {
+      "name": "Three-way match",
+      "area": "P2P",
+      "variants": 2,
+      "deviation_from_standard": "custom tolerance keys instead of standard OMR6",
+      "monthly_volume": 2100,
+      "manual_rework": "medium",
+      "kpis": [
+        "first-time-match rate"
+      ],
+      "objects": [
+        "ZTHREEWAY_TOL"
+      ],
+      "detail": ""
+    },
+    {
+      "name": "Vendor dispute handling",
+      "area": "P2P",
+      "variants": 1,
+      "deviation_from_standard": "bespoke routing class instead of SAP Dispute Management",
+      "monthly_volume": 40,
+      "manual_rework": "high",
+      "kpis": [
+        "resolution time"
+      ],
+      "objects": [
+        "ZCL_DISPUTE_ROUTER"
+      ],
+      "detail": "Low volume; a poor automation candidate despite the manual effort."
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "Bank statement import",
+      "itype": "IDoc",
+      "direction": "inbound",
+      "external_system": "Hausbank",
+      "criticality": "high",
+      "depends_on": [],
+      "detail": "Daily electronic bank statement into cash application."
+    },
+    {
+      "name": "Supplier portal invoices",
+      "itype": "OData",
+      "direction": "inbound",
+      "external_system": "Supplier portal",
+      "criticality": "medium",
+      "depends_on": [
+        "ZFI_TRIAGE_PROG"
+      ],
+      "detail": ""
+    }
+  ]
+}

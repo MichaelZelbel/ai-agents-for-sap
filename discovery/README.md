@@ -16,6 +16,23 @@ the **`sap-landscape-intelligence`** skill, and ask anything.
 This is the honest, book-scale version of what Nova Intelligence and Conduct AI do
 commercially: a grounded landscape inventory plus an AI that reasons over it.
 
+## The workflow: three steps, two commands
+
+Open this repo as your Claude Code workspace and the two skills it ships become your
+commands:
+
+1. **Map** — `/sap-landscape-analyze` walks you through building `register.json`:
+   the mock to learn on, your own landscape hand-authored from the template in
+   `discovery/samples/nordwind-register.json`, or a tenant read via the
+   `AbapRepositorySource` recipe.
+2. **Enrich** — the same skill folds in what your enterprise already knows: a
+   business process master list (Excel, exported as CSV) and Signavio / SAP Build
+   diagrams (BPMN 2.0), via `--ingest`. Claude Code converts anything else.
+3. **Analyze** — `/sap-landscape-intelligence` makes Claude Code the analyst: ask
+   anything, find agent opportunities, rank fit-to-standard, design, govern.
+
+Everything the skills do runs through the CLI below, so you can run any step by hand.
+
 ## Run it (all offline, no key)
 
 ```
@@ -32,7 +49,12 @@ python discovery/explore.py --ask "three-way match"  # the custom objects that t
 python discovery/explore.py --ask "..." --llm        # a grounded, plain-language answer
 python discovery/explore.py --save register.json     # save the whole landscape (+ landscape.md)
 python discovery/explore.py --from register.json --scorecard   # analyze YOUR saved landscape
+python discovery/explore.py --from register.json --ingest bpml.csv --ingest o2c.bpmn --save register.json
 ```
+
+`--ingest` folds enterprise documentation into the register's processes: a business
+process master list as CSV (see `samples/nordwind-processes.csv` for the shape) or a
+Signavio / SAP Build export as BPMN 2.0. Same process name replaces, new names append.
 
 `--llm` reads your OpenRouter key from a `.env` file; everything else needs no key and
 no network.

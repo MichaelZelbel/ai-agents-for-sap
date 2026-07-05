@@ -38,6 +38,7 @@ from shared.dotenv_loader import load_dotenv  # noqa: E402
 
 from discovery.cleancore import render_cleancore  # noqa: E402
 from discovery.diagrams import dependency_mermaid, design_brief  # noqa: E402
+from discovery.ingest import ingest_file, merge_processes  # noqa: E402
 from discovery.landscape import (  # noqa: E402
     render_custom_vs_standard,
     render_governance,
@@ -110,6 +111,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Explore and analyze a landscape register.")
     parser.add_argument("--from", dest="from_json", default=None, help="load the register from a JSON file")
     parser.add_argument("--save", default=None, help="save the register as JSON (writes landscape.md beside it)")
+    parser.add_argument(
+        "--ingest", action="append", default=[],
+        help="fold a BPMN 2.0 file or a BPML CSV into the register's processes (repeatable)",
+    )
     parser.add_argument("--ask", default=None, help="find custom objects mentioning this term")
     parser.add_argument("--llm", action="store_true", help="with --ask, also get a grounded answer")
     parser.add_argument("--cleancore", action="store_true", help="clean-core level (A/B/C/D) per object")
@@ -128,6 +133,11 @@ def main() -> None:
     args = parser.parse_args()
 
     register = _load_register(args)
+
+    for path in args.ingest:
+        incoming = ingest_file(path)
+        register = merge_processes(register, incoming)
+        print(f"ingested {len(incoming)} process(es) from {path}")
 
     if args.save:
         Path(args.save).write_text(register.to_json(), encoding="utf-8")

@@ -1,0 +1,4 @@
+name,area,monthly_volume,manual_rework,deviation_from_standard,objects,detail
+Accounts payable invoice-to-pay,P2P,3200,high,custom triage cockpit and per-vendor tolerance table,ZFI_TRIAGE;ZTHREEWAY_TOL,BPML row 4.1
+Order-to-cash billing,O2C,5400,medium,manual release of billing blocks,,BPML row 2.3
+Month-end close,R2R,120,high,close checklist kept in a spreadsheet,,BPML row 6.1; volume counts close tasks per month

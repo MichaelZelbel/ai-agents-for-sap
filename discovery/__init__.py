@@ -19,6 +19,7 @@ from .models import (
     ProcessInfo,
     RegisterFormatError,
 )
+from .ingest import ingest_file, merge_processes, processes_from_bpmn, processes_from_csv
 from .register import build_register, fit_to_standard_findings, to_grounding
 from .scorecard import (
     FitScore,
@@ -56,4 +57,8 @@ __all__ = [
     "decommission_candidates",
     "retention_candidates",
     "FitScore",
+    "ingest_file",
+    "merge_processes",
+    "processes_from_bpmn",
+    "processes_from_csv",
 ]

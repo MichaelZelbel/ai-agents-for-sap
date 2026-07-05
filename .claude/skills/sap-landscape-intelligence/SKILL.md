@@ -1,6 +1,6 @@
 ---
 name: sap-landscape-intelligence
-description: Turn Claude Code into an analyst of a specific SAP landscape, grounded on its object register. Use when the user asks about their own SAP system's custom code, clean core / fit-to-standard, what to retire or keep, where to build AI agents, how to design one for their landscape, or an AI governance model. Reads the register (register.json / landscape.md) and runs the discovery CLI for facts. The commercial analogs are Nova Intelligence and Conduct AI; this is the DIY version from the book "AI Agents for SAP" (Chapter 28).
+description: Turn Claude Code into an analyst of a specific SAP landscape, grounded on its register. Step 3 of the landscape workflow (sap-landscape-analyze is steps 1 and 2). Use when the user asks about their own SAP system's custom code, clean core / fit-to-standard, what to retire or keep, where to build AI agents, how to design one for their landscape, or an AI governance model. Reads register.json / landscape.md and runs the discovery CLI for facts. The commercial analogs are Nova Intelligence and Conduct AI; this is the DIY version from the book "AI Agents for SAP" (Chapter 28).
 ---
 
 # SAP Landscape Intelligence
@@ -20,6 +20,9 @@ Before you answer anything about the landscape, load it and use only what is the
 
 - The knowledge is `register.json` (source of truth) and `landscape.md` (readable
   brief) in the workspace, produced by `python discovery/explore.py --save register.json`.
+- **No `register.json` yet?** Switch to the `sap-landscape-analyze` skill first: it
+  walks the user through mapping their landscape (mock, hand-authored, or a tenant
+  read) and enriching it with their BPML and Signavio exports. Then come back here.
 - Read them. For a large register, pull the relevant slice instead of the whole file:
   `python discovery/explore.py --from register.json --grounding --focus "<job>"`, or grep.
 - **Never invent an object name.** If something the user needs is not in the register,
